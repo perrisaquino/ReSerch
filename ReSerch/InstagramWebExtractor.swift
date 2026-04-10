@@ -89,43 +89,54 @@ final class InstagramWebExtractor: NSObject {
     (function() {
         var h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.igVideoURL;
         if (!h) return;
+        var reported = false;
 
-        function isVideoCDN(url) {
+        // Used for video.src setter: any non-image CDN URL being set on a video element IS a video
+        function isCDN(url) {
             if (!url || typeof url !== 'string') return false;
             var u = url.toLowerCase();
-            if (!u.includes('cdninstagram.com') && !u.includes('.fbcdn.net')) return false;
-            var path = u.split('?')[0];
-            // Exclude image-only extensions
-            if (path.endsWith('.jpg') || path.endsWith('.jpeg') ||
-                path.endsWith('.png') || path.endsWith('.webp') || path.endsWith('.gif')) return false;
-            return true;
+            return u.includes('cdninstagram.com') || u.includes('.fbcdn.net');
         }
-        function report(url) { try { if (isVideoCDN(url)) h.postMessage(url); } catch(e) {} }
 
-        // 1. video.src setter — catches direct src assignments
+        // Used for fetch/XHR: must look explicitly like a video file, not just any CDN request
+        // (Instagram fetches images, JSON, JS bundles from the same CDNs)
+        function isVideoFetch(url) {
+            if (!url || typeof url !== 'string') return false;
+            var u = url.toLowerCase().split('?')[0];
+            if (!u.includes('cdninstagram.com') && !u.includes('.fbcdn.net')) return false;
+            return u.endsWith('.mp4') || u.endsWith('.m4v') || u.includes('/video/') || u.includes('/videos/');
+        }
+
+        function report(url) {
+            if (reported) return;
+            try { h.postMessage(url); reported = true; } catch(e) {}
+        }
+
+        // 1. video.src setter — most reliable signal: Instagram is explicitly setting a video src
         var d = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
         if (d && d.set) {
             Object.defineProperty(HTMLMediaElement.prototype, 'src', {
                 configurable: true, get: d.get,
                 set: function(val) {
-                    if (typeof val === 'string' && !val.startsWith('blob:')) report(val);
+                    if (typeof val === 'string' && !val.startsWith('blob:') && isCDN(val)) report(val);
                     d.set.call(this, val);
                 }
             });
         }
 
-        // 2. fetch() override — catches the CDN request that produces the blob
+        // 2. fetch() override — only report clear video file URLs, not generic CDN fetches
         var origFetch = window.fetch;
         window.fetch = function() {
             var url = arguments[0];
-            report(typeof url === 'string' ? url : (url instanceof Request ? url.url : null));
+            var urlStr = typeof url === 'string' ? url : (url instanceof Request ? url.url : null);
+            if (urlStr && isVideoFetch(urlStr)) report(urlStr);
             return origFetch.apply(this, arguments);
         };
 
-        // 3. XHR fallback
+        // 3. XHR fallback — same strict filter as fetch
         var origOpen = XMLHttpRequest.prototype.open;
         XMLHttpRequest.prototype.open = function(method, url) {
-            if (typeof url === 'string') report(url);
+            if (typeof url === 'string' && isVideoFetch(url)) report(url);
             return origOpen.apply(this, arguments);
         };
     })();

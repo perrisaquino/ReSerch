@@ -586,9 +586,9 @@ enum VideoExtractor {
             rLog(step: "Download", "HLS manifest detected — exporting via AVFoundation...")
             progress(0.2)
             let audioFile = tempDir.appendingPathComponent(UUID().uuidString + ".m4a")
-            try await extractAudio(from: videoURL, to: audioFile)
+            let actualAudioFile = try await extractAudio(from: videoURL, to: audioFile)
             progress(1.0)
-            return audioFile
+            return actualAudioFile
         }
 
         let videoFile = tempDir.appendingPathComponent(UUID().uuidString + ".mp4")
@@ -637,12 +637,12 @@ enum VideoExtractor {
         rLog(step: "Download", "Extracting audio track...")
         let tAudio = Date()
         let audioFile = tempDir.appendingPathComponent(UUID().uuidString + ".m4a")
-        try await extractAudio(from: videoFile, to: audioFile)
-        rLog(.ok, step: "Download", "Audio extracted in \(String(format: "%.2fs", Date().timeIntervalSince(tAudio)))")
+        let actualAudioFile = try await extractAudio(from: videoFile, to: audioFile)
+        rLog(.ok, step: "Download", "Audio extracted in \(String(format: "%.2fs", Date().timeIntervalSince(tAudio))) — \(actualAudioFile.lastPathComponent)")
         try? FileManager.default.removeItem(at: videoFile)
         progress(1.0)
 
-        return audioFile
+        return actualAudioFile
     }
 
     private static func saveVideoToPhotos(url: URL) async {
@@ -661,21 +661,44 @@ enum VideoExtractor {
         }
     }
 
-    private static func extractAudio(from videoURL: URL, to audioURL: URL) async throws {
+    // Returns the URL of the file actually written — may differ from audioURL if fallback path was used.
+    @discardableResult
+    private static func extractAudio(from videoURL: URL, to audioURL: URL) async throws -> URL {
         let asset = AVURLAsset(url: videoURL)
         let tracks = try await asset.loadTracks(withMediaType: .audio)
 
         if tracks.isEmpty {
+            // No dedicated audio track detected. Try M4A anyway — some encoded formats
+            // report zero audio tracks but still export fine. Fall back to passthrough MP4
+            // only if that fails, and return whichever file actually exists.
+            if let m4aSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) {
+                do {
+                    try await m4aSession.export(to: audioURL, as: .m4a)
+                    if FileManager.default.fileExists(atPath: audioURL.path) {
+                        rLog(.warn, step: "Audio", "No audio tracks detected but M4A export succeeded")
+                        return audioURL
+                    }
+                } catch {
+                    rLog(.warn, step: "Audio", "M4A export failed on no-track video: \(error.localizedDescription)")
+                }
+            }
+            // Final fallback: passthrough to MP4
             guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else {
                 throw ExtractError.audioExportFailed
             }
             let mp4URL = audioURL.deletingPathExtension().appendingPathExtension("mp4")
             try await exportSession.export(to: mp4URL, as: .mp4)
+            guard FileManager.default.fileExists(atPath: mp4URL.path) else {
+                throw ExtractError.audioExportFailed
+            }
+            rLog(.warn, step: "Audio", "Used passthrough MP4 export — no audio track")
+            return mp4URL
         } else {
             guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
                 throw ExtractError.audioExportFailed
             }
             try await exportSession.export(to: audioURL, as: .m4a)
+            return audioURL
         }
     }
 }
