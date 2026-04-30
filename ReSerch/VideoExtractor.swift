@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import Photos
+import WebKit
 
 enum VideoExtractor {
     enum ExtractError: LocalizedError {
@@ -34,9 +35,45 @@ enum VideoExtractor {
         case .threads:
             // Threads is a Meta product — uses the same CDN as Instagram
             return try await fetchInstagramMetadata(pageURL: pageURL, originalURL: pageURL.absoluteString)
+        case .youtubeShorts(let videoId):
+            return try await fetchYouTubeShortsMetadata(videoId: videoId, originalURL: pageURL.absoluteString)
         default:
             throw ExtractError.noVideoFound
         }
+    }
+
+    private static func fetchYouTubeShortsMetadata(videoId: String, originalURL: String) async throws -> VideoMetadata {
+        guard let result = await YouTubeShortsExtractor.extract(videoId: videoId) else {
+            throw ExtractError.noVideoFound
+        }
+        return VideoMetadata(
+            videoURL: result.audioURL,
+            title: result.title,
+            author: result.author,
+            handle: result.handle,
+            caption: result.description,
+            viewCount: result.viewCount,
+            likeCount: result.likeCount,
+            commentCount: nil,
+            shareCount: nil,
+            durationSeconds: parseDurationSeconds(result.duration),
+            postedDate: result.postedDate,
+            thumbnailURL: result.thumbnailURL
+        )
+    }
+
+    private static func parseDurationSeconds(_ formatted: String?) -> Int? {
+        guard let f = formatted else { return nil }
+        let parts = f.split(separator: ":").compactMap { Int($0) }
+        if parts.count == 2 { return parts[0] * 60 + parts[1] }
+        if parts.count == 3 { return parts[0] * 3600 + parts[1] * 60 + parts[2] }
+        return nil
+    }
+
+    /// Fetches a TikTok page with the same headers/cookies the single-video path uses.
+    /// Exposed for `TikTokPlaylistExtractor` so it doesn't have to duplicate header setup.
+    static func fetchTikTokPage(_ url: URL) async throws -> (String, URL) {
+        try await fetchPage(url, headers: tiktokHeaders())
     }
 
     private static func tiktokHeaders() -> [String: String] {
@@ -302,13 +339,95 @@ enum VideoExtractor {
         let shortcode = extractInstagramShortcode(from: pageURL)
         rLog(step: "Instagram", "Shortcode: \(shortcode ?? "none")")
 
-        // Strategy 0: WKWebView with shared Safari session — works when user is logged into Instagram in Safari
-        let webVideoURL: URL? = await Task { @MainActor in
+        // Strategy 0: WKWebView with shared Safari session — works when user is logged into Instagram in Safari.
+        // Pass mediaID so the extractor can call the private API from within the page context,
+        // getting both a direct MP4 URL AND the full metadata JSON (caption, thumbnail, author,
+        // stats, duration). The in-page fetch runs with Safari cookies, which the URLSession-based
+        // fetchInstagramFromAPI call does not have — that's why the URLSession path was silently
+        // returning empty metadata before.
+        let apiMediaID = shortcode.flatMap { shortcodeToMediaID($0) }
+        let webResult: InstagramWebResult? = await Task { @MainActor in
             let e = InstagramWebExtractor()
-            return await e.extract(from: pageURL)
+            return await e.extract(from: pageURL, mediaID: apiMediaID)
         }.value
-        if let videoURL = webVideoURL {
+        if let webResult {
+            let videoURL = webResult.videoURL
             rLog(.ok, step: "Instagram", "WKWebView: \(videoURL.absoluteString.prefix(60))...")
+            // Parse rich metadata from the API JSON the WKWebView captured.
+            if let apiJSON = webResult.apiJSON,
+               let item = firstAPIItem(from: apiJSON),
+               let meta = parseInstagramAPIItem(item, fallbackVideoURL: videoURL) {
+                let apiURLIsDirect = !meta.videoURL.absoluteString.contains("bytestart=")
+                let bestVideoURL = apiURLIsDirect ? meta.videoURL : videoURL
+                rLog(.ok, step: "Instagram", "WKWebView API metadata: \(meta.author) | \(meta.title.prefix(40))")
+                return VideoMetadata(
+                    videoURL: bestVideoURL, title: meta.title, author: meta.author, handle: meta.handle,
+                    caption: meta.caption, viewCount: meta.viewCount, likeCount: meta.likeCount,
+                    commentCount: meta.commentCount, shareCount: meta.shareCount,
+                    durationSeconds: meta.durationSeconds, postedDate: meta.postedDate,
+                    thumbnailURL: meta.thumbnailURL
+                )
+            }
+            // WKWebView did not capture usable API JSON (usually because the in-page API call
+            // also returned login_required). Fall back to the DOM metadata we scraped from
+            // the already-loaded page.
+            let domMetadata = webResult.domMeta.flatMap { makeMetadataFromDOM($0, videoURL: videoURL) }
+            if let domMetadata, !domMetadata.caption.isEmpty && !domMetadata.handle.isEmpty {
+                rLog(.ok, step: "Instagram", "DOM metadata (complete): \(domMetadata.author) | \(domMetadata.title.prefix(40))")
+                return domMetadata
+            }
+            // DOM was thin (or missing caption/handle). The embed page is a public, login-free
+            // HTML endpoint that reliably carries caption + @handle + avatar for public posts.
+            if let code = shortcode,
+               let embedMeta = try? await fetchInstagramEmbedMetadata(shortcode: code, videoURL: videoURL) {
+                rLog(.ok, step: "Instagram", "Embed metadata: \(embedMeta.author) | \(embedMeta.title.prefix(40))")
+                // Merge: prefer embed for caption/author/handle, keep DOM's stats if present.
+                return VideoMetadata(
+                    videoURL: embedMeta.videoURL,
+                    title: embedMeta.title.isEmpty ? (domMetadata?.title ?? "Instagram Reel") : embedMeta.title,
+                    author: embedMeta.author.isEmpty ? (domMetadata?.author ?? "Instagram") : embedMeta.author,
+                    handle: embedMeta.handle.isEmpty ? (domMetadata?.handle ?? "") : embedMeta.handle,
+                    caption: embedMeta.caption.isEmpty ? (domMetadata?.caption ?? "") : embedMeta.caption,
+                    viewCount: domMetadata?.viewCount,
+                    likeCount: domMetadata?.likeCount ?? embedMeta.likeCount,
+                    commentCount: domMetadata?.commentCount ?? embedMeta.commentCount,
+                    shareCount: nil,
+                    durationSeconds: nil,
+                    postedDate: domMetadata?.postedDate ?? embedMeta.postedDate,
+                    thumbnailURL: embedMeta.thumbnailURL ?? domMetadata?.thumbnailURL
+                )
+            }
+            if let domMetadata {
+                rLog(.warn, step: "Instagram", "DOM-only metadata (embed page unavailable): \(domMetadata.author)")
+                return domMetadata
+            }
+            // Try cookieless URLSession API as a last resort (often also 403s).
+            if let mid = apiMediaID,
+               let meta = try? await fetchInstagramFromAPI(mediaID: mid, originalURL: originalURL) {
+                let apiURLIsDirect = !meta.videoURL.absoluteString.contains("bytestart=")
+                let bestVideoURL = apiURLIsDirect ? meta.videoURL : videoURL
+                rLog(.ok, step: "Instagram", "URLSession API metadata: \(meta.author) | \(meta.title.prefix(40))")
+                return VideoMetadata(
+                    videoURL: bestVideoURL, title: meta.title, author: meta.author, handle: meta.handle,
+                    caption: meta.caption, viewCount: meta.viewCount, likeCount: meta.likeCount,
+                    commentCount: meta.commentCount, shareCount: meta.shareCount,
+                    durationSeconds: meta.durationSeconds, postedDate: meta.postedDate,
+                    thumbnailURL: meta.thumbnailURL
+                )
+            }
+            // Final fallback: scrape the page HTML via URLSession.
+            if let (html, _) = try? await fetchPage(pageURL, headers: instagramHeaders()),
+               let htmlMeta = try? extractInstagramMetadata(from: html, originalURL: originalURL) {
+                rLog(.warn, step: "Instagram", "API unavailable — using HTML metadata fallback")
+                return VideoMetadata(
+                    videoURL: videoURL, title: htmlMeta.title, author: htmlMeta.author, handle: htmlMeta.handle,
+                    caption: htmlMeta.caption, viewCount: htmlMeta.viewCount, likeCount: htmlMeta.likeCount,
+                    commentCount: htmlMeta.commentCount, shareCount: htmlMeta.shareCount,
+                    durationSeconds: htmlMeta.durationSeconds, postedDate: htmlMeta.postedDate,
+                    thumbnailURL: htmlMeta.thumbnailURL
+                )
+            }
+            rLog(.warn, step: "Instagram", "No metadata source — returning video with empty metadata")
             return VideoMetadata(
                 videoURL: videoURL, title: "Instagram Reel",
                 author: "Instagram", handle: "",
@@ -323,6 +442,11 @@ enum VideoExtractor {
         // Strategy 1: Fetch the reel page directly
         if let (html, _) = try? await fetchPage(pageURL, headers: headers) {
             rLog(step: "Instagram", "Page HTML \(html.count) bytes")
+            // Log first 200 chars to see if we hit a login wall
+            let preview = html.prefix(200).replacingOccurrences(of: "\n", with: " ")
+            rLog(step: "Instagram", "HTML preview: \(preview)")
+            let isLoginWall = html.contains("accounts/login") || html.contains("login_required") || html.count < 5000
+            if isLoginWall { rLog(.warn, step: "Instagram", "Looks like a login wall (\(html.count) bytes)") }
             if let meta = try? extractInstagramMetadata(from: html, originalURL: originalURL) {
                 return meta
             }
@@ -456,65 +580,202 @@ enum VideoExtractor {
     }
 
     // Hits Instagram's private mobile API — works for public posts without login cookies
-    private static func fetchInstagramFromAPI(mediaID: Int64, originalURL: String) async throws -> VideoMetadata {
-        guard let apiURL = URL(string: "https://i.instagram.com/api/v1/media/\(mediaID)/info/") else {
-            throw ExtractError.noVideoFound
+    // Build VideoMetadata from the DOM scrape dict the WKWebView posts back.
+    // Returns nil if the scrape produced nothing usable (no caption, author, or thumbnail).
+    private static func makeMetadataFromDOM(_ dom: [String: Any], videoURL: URL) -> VideoMetadata? {
+        let rawTitle = (dom["title"] as? String) ?? ""
+        let author   = (dom["author"] as? String) ?? ""
+        let handle   = (dom["handle"] as? String) ?? ""
+        let caption  = (dom["caption"] as? String) ?? ""
+        let thumbStr = (dom["thumbnailURL"] as? String) ?? ""
+        let thumbnailURL = thumbStr.isEmpty ? nil : URL(string: thumbStr)
+
+        let likeCount    = dom["likeCount"] as? Int
+        let commentCount = dom["commentCount"] as? Int
+
+        // Consider a scrape "usable" if we got at least one real field beyond a generic title.
+        if author.isEmpty && caption.isEmpty && thumbnailURL == nil && likeCount == nil {
+            return nil
         }
-        var request = URLRequest(url: apiURL)
-        request.setValue(
-            "Instagram 275.0.0.27.98 Android (33/13; 420dpi; 1080x2400; samsung; SM-G998B; p3q; qcom; en_US; 458229258)",
-            forHTTPHeaderField: "User-Agent"
+
+        let title = caption.isEmpty
+            ? (rawTitle.isEmpty ? "Instagram Reel" : rawTitle)
+            : String(caption.prefix(60))
+
+        let postedDate: Date?
+        if let iso = dom["uploadDate"] as? String, !iso.isEmpty {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            postedDate = f.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+        } else {
+            postedDate = nil
+        }
+
+        return VideoMetadata(
+            videoURL: videoURL,
+            title: title,
+            author: author.isEmpty ? "Instagram" : author,
+            handle: handle,
+            caption: caption,
+            viewCount: nil,
+            likeCount: likeCount,
+            commentCount: commentCount,
+            shareCount: nil,
+            durationSeconds: nil,
+            postedDate: postedDate,
+            thumbnailURL: thumbnailURL
         )
-        request.setValue("936619743392459", forHTTPHeaderField: "X-IG-App-ID")
-        request.setValue("https://www.instagram.com/", forHTTPHeaderField: "Referer")
+    }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        rLog(status == 200 ? .ok : .fail, step: "Instagram", "API \(status), \(data.count) bytes")
+    // Fetches Instagram's public /embed/captioned/ page for a reel/post shortcode and
+    // pulls caption, author display name, @handle, and thumbnail. The embed endpoint
+    // works without login for public posts and carries richer HTML than the JS-rendered
+    // main reel page.
+    private static func fetchInstagramEmbedMetadata(shortcode: String, videoURL: URL) async throws -> VideoMetadata {
+        let headers = instagramHeaders()
+        var html = ""
+        for embedPath in ["/reel/\(shortcode)/embed/captioned/", "/p/\(shortcode)/embed/captioned/"] {
+            guard let embedURL = URL(string: "https://www.instagram.com\(embedPath)") else { continue }
+            if let (body, _) = try? await fetchPage(embedURL, headers: headers), body.count > 500 {
+                html = body
+                rLog(step: "Instagram/Embed", "HTML \(body.count) bytes from \(embedPath)")
+                break
+            }
+        }
+        guard !html.isEmpty else { throw ExtractError.noVideoFound }
 
-        guard status == 200,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let items = json["items"] as? [[String: Any]],
-              let item = items.first else {
-            throw ExtractError.noVideoFound
+        // --- @handle from the first <a ... href="https://www.instagram.com/{user}/">
+        var handle = ""
+        if let range = html.range(of: "instagram.com/", options: []) {
+            let after = html[range.upperBound...]
+            if let end = after.firstIndex(where: { $0 == "/" || $0 == "\"" || $0 == "?" }) {
+                let user = String(after[..<end])
+                let reserved: Set<String> = ["reel", "reels", "p", "tv", "explore", "accounts", "direct", "stories", "about", "embed"]
+                if !user.isEmpty && !reserved.contains(user.lowercased()) {
+                    handle = "@\(user)"
+                }
+            }
         }
 
-        // Video URL
-        guard let videoVersions = item["video_versions"] as? [[String: Any]],
-              let first = videoVersions.first,
-              let urlStr = first["url"] as? String,
-              let resolvedURL = URL(string: urlStr) else {
-            throw ExtractError.noVideoFound
+        // --- Author display name: <span class="UsernameText">display name</span>
+        // Embed pages use a few class names interchangeably across years; try several.
+        var author = ""
+        for pattern in ["class=\"UsernameText\">", "class=\"Username\"[^>]*>", "class=\"Nickname\">"] {
+            if let r = html.range(of: pattern, options: .regularExpression) {
+                let after = html[r.upperBound...]
+                if let end = after.firstIndex(of: "<") {
+                    let name = String(after[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !name.isEmpty { author = name; break }
+                }
+            }
+        }
+        // Fallback: og:title "username on Instagram:" pattern
+        if author.isEmpty,
+           let r = html.range(of: "property=\"og:title\" content=\""),
+           let end = html[r.upperBound...].firstIndex(of: "\"") {
+            let title = String(html[r.upperBound..<end])
+            if let onRange = title.range(of: " on Instagram") {
+                author = String(title[..<onRange.lowerBound])
+            }
         }
 
-        // Author
+        // --- Caption: <div class="Caption"> ... <span class="CaptionText">{caption}</span>
+        var caption = ""
+        for pattern in ["class=\"CaptionText\"[^>]*>", "class=\"Caption\"[^>]*>"] {
+            if let r = html.range(of: pattern, options: .regularExpression) {
+                let after = html[r.upperBound...]
+                if let end = after.firstIndex(of: "<") {
+                    let raw = String(after[..<end])
+                    let cleaned = raw
+                        .replacingOccurrences(of: "&#x27;", with: "'")
+                        .replacingOccurrences(of: "&#39;", with: "'")
+                        .replacingOccurrences(of: "&amp;", with: "&")
+                        .replacingOccurrences(of: "&quot;", with: "\"")
+                        .replacingOccurrences(of: "&lt;", with: "<")
+                        .replacingOccurrences(of: "&gt;", with: ">")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !cleaned.isEmpty { caption = cleaned; break }
+                }
+            }
+        }
+        // Fallback: og:description
+        if caption.isEmpty,
+           let r = html.range(of: "property=\"og:description\" content=\""),
+           let end = html[r.upperBound...].firstIndex(of: "\"") {
+            caption = String(html[r.upperBound..<end])
+        }
+
+        // --- Thumbnail: og:image
+        var thumbnailURL: URL?
+        if let r = html.range(of: "property=\"og:image\" content=\""),
+           let end = html[r.upperBound...].firstIndex(of: "\"") {
+            let raw = String(html[r.upperBound..<end])
+                .replacingOccurrences(of: "&amp;", with: "&")
+            thumbnailURL = URL(string: raw)
+        }
+
+        let title = caption.isEmpty ? "Instagram Reel" : String(caption.prefix(60))
+
+        return VideoMetadata(
+            videoURL: videoURL,
+            title: title,
+            author: author.isEmpty ? "Instagram" : author,
+            handle: handle,
+            caption: caption,
+            viewCount: nil,
+            likeCount: nil,
+            commentCount: nil,
+            shareCount: nil,
+            durationSeconds: nil,
+            postedDate: nil,
+            thumbnailURL: thumbnailURL
+        )
+    }
+
+    // Pulls the first `items[0]` dict out of an Instagram /media/{id}/info response.
+    private static func firstAPIItem(from json: [String: Any]) -> [String: Any]? {
+        guard let items = json["items"] as? [[String: Any]] else { return nil }
+        return items.first
+    }
+
+    // Shared parser for an Instagram API item — used by both the in-WKWebView cookie-backed path
+    // and the URLSession fallback. Returns nil if the item has no video_versions.
+    // `fallbackVideoURL` is used only if the item itself doesn't expose a video_versions URL.
+    private static func parseInstagramAPIItem(_ item: [String: Any], fallbackVideoURL: URL? = nil) -> VideoMetadata? {
+        let resolvedURL: URL
+        if let vs = item["video_versions"] as? [[String: Any]],
+           let first = vs.first,
+           let urlStr = first["url"] as? String,
+           let u = URL(string: urlStr) {
+            resolvedURL = u
+        } else if let fallback = fallbackVideoURL {
+            resolvedURL = fallback
+        } else {
+            return nil
+        }
+
         let user = item["user"] as? [String: Any]
         let author = user?["full_name"] as? String ?? "Instagram"
         let rawHandle = user?["username"] as? String ?? ""
         let handle = rawHandle.isEmpty ? "" : "@\(rawHandle)"
 
-        // Caption + title
         let caption = (item["caption"] as? [String: Any])?["text"] as? String ?? ""
         let title = caption.isEmpty ? "Instagram Reel" : String(caption.prefix(60))
 
-        // Stats
         let likeCount    = item["like_count"] as? Int
         let commentCount = item["comment_count"] as? Int
         let viewCount    = item["play_count"] as? Int ?? item["view_count"] as? Int
 
-        // Duration
         let durationSeconds: Int?
         if let dur = item["video_duration"] as? Double { durationSeconds = Int(dur) }
         else if let dur = item["video_duration"] as? Int { durationSeconds = dur }
         else { durationSeconds = nil }
 
-        // Posted date
         let postedDate: Date?
         if let ts = item["taken_at"] as? TimeInterval { postedDate = Date(timeIntervalSince1970: ts) }
         else if let ts = item["taken_at"] as? Int { postedDate = Date(timeIntervalSince1970: TimeInterval(ts)) }
         else { postedDate = nil }
 
-        // Thumbnail
         let thumbnailURL: URL?
         if let imageSets = item["image_versions2"] as? [String: Any],
            let candidates = imageSets["candidates"] as? [[String: Any]],
@@ -525,13 +786,42 @@ enum VideoExtractor {
             thumbnailURL = nil
         }
 
-        rLog(.ok, step: "Instagram", "API: \(author) | dur:\(durationSeconds ?? 0)s")
         return VideoMetadata(
             videoURL: resolvedURL, title: title, author: author, handle: handle,
             caption: caption, viewCount: viewCount, likeCount: likeCount,
             commentCount: commentCount, shareCount: nil,
             durationSeconds: durationSeconds, postedDate: postedDate, thumbnailURL: thumbnailURL
         )
+    }
+
+    private static func fetchInstagramFromAPI(mediaID: Int64, originalURL: String) async throws -> VideoMetadata {
+        guard let apiURL = URL(string: "https://i.instagram.com/api/v1/media/\(mediaID)/info/") else {
+            throw ExtractError.noVideoFound
+        }
+        var request = URLRequest(url: apiURL)
+        request.setValue(
+            "Instagram 350.0.0.31.100 Android (34/14; 420dpi; 1080x2400; samsung; SM-S918B; b0q; qcom; en_US; 628376847)",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue("936619743392459", forHTTPHeaderField: "X-IG-App-ID")
+        request.setValue("https://www.instagram.com/", forHTTPHeaderField: "Referer")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        rLog(status == 200 ? .ok : .fail, step: "Instagram", "API \(status), \(data.count) bytes")
+        if status != 200, let snippet = String(data: data.prefix(300), encoding: .utf8) {
+            rLog(.fail, step: "Instagram", "API error body: \(snippet)")
+        }
+
+        guard status == 200,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let item = firstAPIItem(from: json),
+              let meta = parseInstagramAPIItem(item) else {
+            throw ExtractError.noVideoFound
+        }
+
+        rLog(.ok, step: "Instagram", "API: \(meta.author) | dur:\(meta.durationSeconds ?? 0)s")
+        return meta
     }
 
     // MARK: - Twitter / X
@@ -591,6 +881,56 @@ enum VideoExtractor {
             return actualAudioFile
         }
 
+        // All Instagram CDN URLs (scontent.cdninstagram.com and *.fna.fbcdn.net/o1/...)
+        // use DASH byte-range params (bytestart/byteend) and require session cookies.
+        // The intercepted URL is usually just the init segment (byteend ~823 bytes).
+        // Strategy: expand byteend to 8MB and download via URLSession with cookies.
+        // The CDN's HMAC signature (oh= param) covers path + expiry, not the byte range,
+        // so expanding it should return the full audio data.
+        let host = videoURL.host ?? ""
+        let isInstagramCDN = host.contains("cdninstagram") || host.contains("fbcdn")
+        if isInstagramCDN {
+            let cookieHeader = await instagramCookieHeader()
+            rLog(step: "Download", "Cookie header: \(cookieHeader.isEmpty ? "none" : "\(cookieHeader.count) chars")")
+
+            // Build URL with expanded byte range (keep all other params including signature)
+            var expandedURL = videoURL
+            if var comps = URLComponents(url: videoURL, resolvingAgainstBaseURL: false) {
+                var items = comps.queryItems ?? []
+                items.removeAll { $0.name == "bytestart" || $0.name == "byteend" }
+                items.append(URLQueryItem(name: "bytestart", value: "0"))
+                items.append(URLQueryItem(name: "byteend", value: "104857599"))  // 100MB — covers even long Reels
+                comps.queryItems = items
+                expandedURL = comps.url ?? videoURL
+            }
+            rLog(step: "Download", "Instagram CDN — attempting full audio via URLSession (byteend expanded to 100MB)...")
+            progress(0.1)
+
+            var dlRequest = URLRequest(url: expandedURL)
+            dlRequest.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+            dlRequest.setValue("https://www.instagram.com/", forHTTPHeaderField: "Referer")
+            dlRequest.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+
+            let (data, response) = try await URLSession.shared.data(for: dlRequest)
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            rLog(step: "Download", "Instagram CDN response: \(statusCode), \(data.count) bytes")
+
+            guard data.count > 10_000 else {
+                throw ExtractError.downloadFailed("Instagram CDN returned too few bytes (\(data.count)) — URL may have expired or cookies are invalid")
+            }
+
+            let rawFile = tempDir.appendingPathComponent(UUID().uuidString + ".mp4")
+            try data.write(to: rawFile)
+            defer { try? FileManager.default.removeItem(at: rawFile) }
+            progress(0.5)
+            rLog(.ok, step: "Download", "Instagram CDN download success — \(data.count) bytes — decoding with AVAssetReader...")
+
+            let audioFile = tempDir.appendingPathComponent(UUID().uuidString + ".m4a")
+            let actualAudioFile = try await extractAudioWithReader(from: rawFile, to: audioFile)
+            progress(1.0)
+            return actualAudioFile
+        }
+
         let videoFile = tempDir.appendingPathComponent(UUID().uuidString + ".mp4")
 
         var request = URLRequest(url: videoURL)
@@ -598,7 +938,6 @@ enum VideoExtractor {
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             forHTTPHeaderField: "User-Agent"
         )
-        let host = videoURL.host ?? ""
         let referer: String
         if host.contains("cdninstagram") || host.contains("fbcdn") {
             referer = "https://www.instagram.com/"
@@ -615,7 +954,8 @@ enum VideoExtractor {
         let tDL = Date()
 
         // download(for:) streams directly to a temp file — no full-video RAM buffer
-        let (tmpURL, response) = try await URLSession.shared.download(for: request)
+        // One auto-retry on transient network failure (cell handoff, packet loss).
+        let (tmpURL, response) = try await downloadWithRetry(request: request)
 
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw ExtractError.downloadFailed("Server returned \((response as? HTTPURLResponse)?.statusCode ?? 0)")
@@ -645,6 +985,24 @@ enum VideoExtractor {
         return actualAudioFile
     }
 
+    /// Single auto-retry on transient network errors (cell handoff, packet loss, brief drops).
+    /// Catches connection-lost / timeout / not-connected and tries one more time after 1s.
+    /// Other errors propagate immediately so real failures don't get masked by retries.
+    private static func downloadWithRetry(request: URLRequest, maxAttempts: Int = 2) async throws -> (URL, URLResponse) {
+        var lastError: Error = URLError(.unknown)
+        for attempt in 1...maxAttempts {
+            do {
+                return try await URLSession.shared.download(for: request)
+            } catch let error as URLError where [.networkConnectionLost, .timedOut, .notConnectedToInternet].contains(error.code) {
+                rLog(step: "Download", "Attempt \(attempt) failed (\(error.code.rawValue)), retrying...")
+                lastError = error
+                try? await Task.sleep(for: .seconds(1))
+                continue
+            }
+        }
+        throw lastError
+    }
+
     private static func saveVideoToPhotos(url: URL) async {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard status == .authorized || status == .limited else {
@@ -661,10 +1019,80 @@ enum VideoExtractor {
         }
     }
 
+    @MainActor
+    private static func instagramCookieHeader() async -> String {
+        let cookies = await WKWebsiteDataStore.default().httpCookieStore.allCookies()
+        return cookies
+            .filter { $0.domain.contains("instagram.com") || $0.domain.contains("fbcdn.net") }
+            .map { "\($0.name)=\($0.value)" }
+            .joined(separator: "; ")
+    }
+
+    /// Decodes audio from a fragmented MP4 (DASH segment) using AVAssetReader.
+    // internal (not private) so the test target can reach it via @testable import
+    /// AVAssetExportSession cannot seek across fMP4 fragment boundaries ("Invalid sample cursor"),
+    /// but AVAssetReader reads linearly without seeking — making it the right tool for DASH audio.
+    /// Output is a 16kHz mono WAV file, which WhisperKit accepts natively.
+    static func extractAudioWithReader(from fileURL: URL, to outputURL: URL) async throws -> URL {
+        let asset = AVURLAsset(url: fileURL)
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        guard let audioTrack = tracks.first else {
+            rLog(.fail, step: "Audio", "AVAssetReader: no audio tracks in downloaded file")
+            throw ExtractError.audioExportFailed
+        }
+
+        let reader = try AVAssetReader(asset: asset)
+        let pcmSettings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVSampleRateKey: 16000.0,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+        let readerOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: pcmSettings)
+        readerOutput.alwaysCopiesSampleData = false
+        reader.add(readerOutput)
+
+        guard reader.startReading() else {
+            rLog(.fail, step: "Audio", "AVAssetReader: startReading failed — \(reader.error?.localizedDescription ?? "unknown")")
+            throw ExtractError.audioExportFailed
+        }
+
+        guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true) else {
+            rLog(.fail, step: "Audio", "AVAudioFormat init returned nil")
+            throw ExtractError.audioExportFailed
+        }
+        let wavURL = outputURL.deletingPathExtension().appendingPathExtension("wav")
+        let outFile = try AVAudioFile(forWriting: wavURL, settings: format.settings, commonFormat: .pcmFormatInt16, interleaved: true)
+
+        var totalFrames = 0
+        while let sampleBuffer = readerOutput.copyNextSampleBuffer() {
+            let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
+            guard numSamples > 0, let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { continue }
+            let byteCount = CMBlockBufferGetDataLength(blockBuffer)
+            guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(numSamples)) else { continue }
+            pcmBuffer.frameLength = AVAudioFrameCount(numSamples)
+            guard let channelData = pcmBuffer.int16ChannelData else { continue }
+            CMBlockBufferCopyDataBytes(blockBuffer, atOffset: 0, dataLength: byteCount,
+                                       destination: UnsafeMutableRawPointer(channelData[0]))
+            try outFile.write(from: pcmBuffer)
+            totalFrames += numSamples
+        }
+
+        rLog(.ok, step: "Audio", "AVAssetReader: decoded \(totalFrames) samples → \(wavURL.lastPathComponent)")
+        guard totalFrames > 0 else {
+            throw ExtractError.audioExportFailed
+        }
+        return wavURL
+    }
+
     // Returns the URL of the file actually written — may differ from audioURL if fallback path was used.
     @discardableResult
-    private static func extractAudio(from videoURL: URL, to audioURL: URL) async throws -> URL {
-        let asset = AVURLAsset(url: videoURL)
+    private static func extractAudio(from videoURL: URL, to audioURL: URL, httpHeaders: [String: String] = [:]) async throws -> URL {
+        let assetOptions: [String: Any] = httpHeaders.isEmpty ? [:] : ["AVURLAssetHTTPHeaderFieldsKey": httpHeaders]
+        let asset = AVURLAsset(url: videoURL, options: assetOptions.isEmpty ? nil : assetOptions)
         let tracks = try await asset.loadTracks(withMediaType: .audio)
 
         if tracks.isEmpty {

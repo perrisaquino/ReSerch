@@ -2,13 +2,20 @@ import UserNotifications
 
 enum NotificationManager {
     static func requestPermission() {
+        #if !targetEnvironment(simulator)
         UNUserNotificationCenter.current()
             .requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        #endif
     }
 
-    static func sendBatchComplete(count: Int, failed: Int) {
+    static func sendBatchComplete(count: Int, failed: Int, playlistName: String? = nil) {
         let content = UNMutableNotificationContent()
-        content.title = "ReSerch"
+        if let name = playlistName, !name.isEmpty {
+            let trimmed = name.count > 40 ? String(name.prefix(40)) + "…" : name
+            content.title = "Playlist '\(trimmed)'"
+        } else {
+            content.title = "ReSerch"
+        }
         if failed == 0 {
             content.body = count == 1
                 ? "1 transcript saved."

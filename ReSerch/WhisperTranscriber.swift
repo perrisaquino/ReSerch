@@ -1,6 +1,7 @@
 import Foundation
 import WhisperKit
 
+@MainActor
 final class WhisperTranscriber {
     private var pipe: WhisperKit?
     private(set) var modelReady = false
@@ -19,7 +20,14 @@ final class WhisperTranscriber {
             .appendingPathComponent(modelName)
         guard FileManager.default.fileExists(atPath: modelFolder.path) else { return }
         do {
-            let whisper = try await WhisperKit(model: modelName, verbose: false)
+            // Pass modelFolder explicitly + download:false so WhisperKit loads from disk
+            // without making any network calls or triggering a re-download check.
+            let whisper = try await WhisperKit(
+                model: modelName,
+                modelFolder: modelFolder.path,
+                verbose: false,
+                download: false
+            )
             self.pipe = whisper
             self.modelReady = true
         } catch {
@@ -27,11 +35,12 @@ final class WhisperTranscriber {
         }
     }
 
-    func downloadModel() -> AsyncStream<Double> {
+    nonisolated func downloadModel() -> AsyncStream<Double> {
         AsyncStream { continuation in
             Task.detached(priority: .userInitiated) {
                 do {
-                    let whisper = try await WhisperKit(model: self.modelName, verbose: false)
+                    let modelName = await self.modelName
+                    let whisper = try await WhisperKit(model: modelName, verbose: false)
                     await MainActor.run { self.pipe = whisper; self.modelReady = true }
                     continuation.yield(1.0)
                 } catch {

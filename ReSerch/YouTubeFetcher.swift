@@ -5,36 +5,51 @@ enum YouTubeFetcher {
         case noCaptionsAvailable
         case invalidResponse
         case networkError(String)
+        case rateLimited
+        case botBlocked
 
         var errorDescription: String? {
             switch self {
             case .noCaptionsAvailable:
-                return "No captions found. This video may not have auto-generated subtitles."
+                return "This YouTube video has no captions. ReSerch reads YouTube captions directly — it doesn't transcribe YouTube audio. Try a video with auto-generated or manual subtitles, or paste a TikTok, Instagram, or Twitter link to transcribe audio on-device."
             case .invalidResponse:
-                return "Could not parse YouTube response."
+                return "YouTube returned an unexpected response. This usually means YouTube changed something on their end. Try again later, or paste a TikTok, Instagram, or Twitter link."
             case .networkError(let msg):
-                return "Network error: \(msg)"
+                return "Couldn't reach YouTube (\(msg)). Check your connection and try again."
+            case .rateLimited:
+                return "YouTube is rate-limiting requests. Wait a minute and try again, or paste a TikTok, Instagram, or Twitter link to transcribe on-device."
+            case .botBlocked:
+                return "YouTube blocked this request (this can happen on some networks). Try again, or paste a TikTok, Instagram, or Twitter link to transcribe audio directly on your device."
             }
         }
     }
 
     static func fetch(videoId: String, originalURL: String) async throws -> TranscriptResult {
-        let pageURL = URL(string: "https://www.youtube.com/watch?v=\(videoId)")!
+        guard let pageURL = URL(string: "https://www.youtube.com/watch?v=\(videoId)") else {
+            throw FetchError.networkError("Invalid video ID: \(videoId)")
+        }
         rLog(step: "YouTube", "Fetching page: \(pageURL)")
 
         var request = URLRequest(url: pageURL)
         request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
             forHTTPHeaderField: "User-Agent"
         )
         request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue("CONSENT=YES+cb; SOCS=CAI", forHTTPHeaderField: "Cookie")
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         rLog(status == 200 ? .ok : .fail, step: "YouTube", "HTTP \(status), \(data.count) bytes")
 
+        if status == 429 { throw FetchError.rateLimited }
+        if status == 403 { throw FetchError.botBlocked }
         guard status == 200, let html = String(data: data, encoding: .utf8) else {
             throw FetchError.networkError("HTTP \(status)")
+        }
+        // YouTube serves a consent/captcha page with 200 status — detect by content
+        if html.contains("recaptcha") || html.contains("/sorry/") || html.contains("Before you continue to YouTube") {
+            throw FetchError.botBlocked
         }
 
         rLog(step: "YouTube", "hasCaptions:\(html.contains("captionTracks")) hasPlayerResponse:\(html.contains("ytInitialPlayerResponse"))")
@@ -63,7 +78,7 @@ enum YouTubeFetcher {
 
     // MARK: - Metadata
 
-    private struct YouTubeMeta {
+    struct YouTubeMeta {
         var title = "Untitled"
         var author = "Unknown"
         var handle = ""
@@ -73,7 +88,7 @@ enum YouTubeFetcher {
         var postedDate: Date? = nil
     }
 
-    private static func extractMetadata(from html: String, videoId: String, originalURL: String) -> YouTubeMeta {
+    static func extractMetadata(from html: String, videoId: String, originalURL: String) -> YouTubeMeta {
         var meta = YouTubeMeta()
 
         // ytInitialPlayerResponse contains videoDetails

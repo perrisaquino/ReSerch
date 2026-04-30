@@ -114,12 +114,24 @@ enum MarkdownFormatter {
             .trimmingCharacters(in: .whitespaces)
             .replacingOccurrences(of: "@", with: "")
         guard !raw.isEmpty else { return nil }
-        switch result.platform.lowercased() {
-        case "youtube":   return "https://www.youtube.com/@\(raw)"
-        case "tiktok":    return "https://www.tiktok.com/@\(raw)"
-        case "instagram": return "https://www.instagram.com/\(raw)"
-        default:          return nil
+
+        let platform = result.platform.lowercased()
+
+        // YouTube channel IDs are 24 chars starting with "UC". Use /channel/ path.
+        // Vanity handles use /@handle path.
+        if platform.hasPrefix("youtube") {
+            if raw.hasPrefix("UC") && raw.count == 24 {
+                return "https://www.youtube.com/channel/\(raw)"
+            }
+            return "https://www.youtube.com/@\(raw)"
         }
+        if platform.hasPrefix("tiktok")    { return "https://www.tiktok.com/@\(raw)" }
+        if platform.hasPrefix("instagram") { return "https://www.instagram.com/\(raw)" }
+        if platform.hasPrefix("threads")   { return "https://www.threads.net/@\(raw)" }
+        if platform.hasPrefix("twitter") || platform.hasPrefix("x") {
+            return "https://x.com/\(raw)"
+        }
+        return nil
     }
 
     private static func formatCount(_ n: Int) -> String {

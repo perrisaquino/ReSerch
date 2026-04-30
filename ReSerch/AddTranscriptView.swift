@@ -5,6 +5,7 @@ struct AddTranscriptView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var urlText = ""
     @State private var entryToShow: TranscriptEntry? = nil
+    @State private var playlistURLToPreview: IdentifiedURL? = nil
     @FocusState private var fieldFocused: Bool
 
     // Parse valid URLs from the text field (one per line)
@@ -129,17 +130,43 @@ struct AddTranscriptView: View {
                 TranscriptDetailView(entry: entry, vm: vm)
                     .onDisappear { dismiss() }
             }
+            .sheet(item: $playlistURLToPreview) { wrapped in
+                PlaylistPreviewView(
+                    playlistURL: wrapped.url,
+                    vm: vm,
+                    onEnqueue: {
+                        // Batch is running; dismiss the Add sheet so user returns to history
+                        urlText = ""
+                        playlistURLToPreview = nil
+                        dismiss()
+                    },
+                    onCancel: {
+                        playlistURLToPreview = nil
+                    }
+                )
+            }
         }
     }
 
     private func submit() {
         if isBatch {
             Task { await vm.fetchBatch(rawText: urlText) }
-        } else {
-            vm.urlInput = urlText
-            Task { await vm.fetchTranscript() }
+            return
         }
+        let trimmed = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: trimmed), PlatformRouter.isTikTokPlaylist(url) {
+            playlistURLToPreview = IdentifiedURL(url: url)
+            return
+        }
+        vm.urlInput = urlText
+        Task { await vm.fetchTranscript() }
     }
+}
+
+// Identifiable wrapper so a URL can drive `.sheet(item:)`.
+private struct IdentifiedURL: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
 }
 
 // MARK: - Status child view
@@ -155,6 +182,7 @@ struct AddTranscriptStatusView: View {
     let onAddAnother: () -> Void
 
     @State private var quirkyIndex = 0
+    @State private var signInProvider: TranscriptViewModel.SafariProvider? = nil
 
     private let fetchMessages = [
         "Knocking on the server's door...",
@@ -177,33 +205,31 @@ struct AddTranscriptStatusView: View {
 
     private let transcribeMessages = [
         "Listening very carefully...",
-        "Turning mouth sounds into words...",
-        "Bribing the attention heads...",
-        "82 million parameters doing their thing...",
-        "Running mel spectrograms, whatever those are...",
-        "Tokenizing your content...",
-        "The model is concentrating, please hold...",
-        "Decoding human speech soup...",
-        "Finding the words between the words...",
-        "WhisperKit is on it, promise...",
-        "Converting vibes to text...",
-        "Definitely not just making this up...",
-        "Performing audio alchemy...",
-        "Asking the transformer to transformer harder...",
-        "Isolating syllables from background vibes...",
-        "Turning waveforms into opinions...",
-        "The GPU is sweating a little...",
-        "Each token costs a tiny piece of my soul...",
-        "Arguing with the beam search...",
-        "The model read that part three times just to be sure...",
-        "Speech recognition, but make it philosophical...",
-        "Your words are being reconstructed from math...",
-        "Counting spectrogram pixels like it's my job...",
-        "At least it's not video captioning from 2014...",
-        "Whisper says it's almost done. Whisper always says that.",
-        "Assembling your transcript one hallucination at a time. Kidding. Mostly.",
-        "This part usually goes faster. Usually.",
-        "Some say the model still transcribes in there to this day...",
+        "Cleaning up the audio...",
+        "Catching every word...",
+        "Reading between the lines...",
+        "Spelling things out...",
+        "Untangling the sentences...",
+        "Polishing the punctuation...",
+        "Sorting noise from signal...",
+        "Almost got it...",
+        "Getting the good parts...",
+        "Hearing it out...",
+        "Writing it down properly...",
+        "Double-checking the tricky bits...",
+        "Making sure nothing slipped through...",
+        "Finding the rhythm of it...",
+        "Tightening the loose words...",
+        "Tidying things up...",
+        "Letting it cook...",
+        "Stitching it together...",
+        "Nearly there...",
+        "Reading it back to itself...",
+        "Lining up the words...",
+        "Just a sec, this part's interesting...",
+        "Crossing the t's...",
+        "Settling in...",
+        "Wrapping up...",
     ]
 
     var body: some View {
@@ -221,6 +247,8 @@ struct AddTranscriptStatusView: View {
                 fetchButton
                 if case .error(let msg) = vm.status {
                     errorBanner(msg)
+                } else if case .needsSafariSignIn(let provider) = vm.status {
+                    safariSignInBanner(provider)
                 }
             }
         }
@@ -231,31 +259,146 @@ struct AddTranscriptStatusView: View {
                 quirkyIndex += 1
             }
         }
+        .sheet(item: $signInProvider) { provider in
+            InAppSignInSheet(provider: provider) {
+                // After the sheet closes, immediately retry — pre-flight will pass if
+                // the user actually signed in, or re-show the banner if they cancelled.
+                Task { await vm.fetchTranscript() }
+            }
+        }
     }
 
     // MARK: Batch progress
 
     private var batchProgressArea: some View {
-        VStack(spacing: 16) {
-            ProgressView(value: Double(vm.batchCurrent), total: Double(vm.batchTotal))
-                .tint(.accentColor)
+        VStack(spacing: 28) {
+            // Step pills
+            batchStepPills
 
-            Text("Transcribing \(vm.batchCurrent) of \(vm.batchTotal)...")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-
-            if vm.isLoading {
-                Text(phaseLabel)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+            // Big "N of M" header
+            VStack(spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("\(vm.batchCurrent)")
+                        .font(.system(size: 44, weight: .bold))
+                        .foregroundStyle(.white)
+                    Text("of")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.4))
+                    Text("\(vm.batchTotal)")
+                        .font(.system(size: 44, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+                Text("transcripts in flight")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .tracking(0.3)
             }
 
-            Text("You can background the app — you'll get a notification when done.")
-                .font(.caption2)
-                .foregroundStyle(.quaternary)
+            // Current phase progress
+            VStack(spacing: 10) {
+                ProgressView(value: phaseProgress)
+                    .tint(.accentColor)
+                    .scaleEffect(x: 1, y: 1.2, anchor: .center)
+                    .animation(.linear(duration: 0.3), value: phaseProgress)
+
+                HStack {
+                    Text(phaseTitle)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.75))
+                    Spacer()
+                    if phaseProgress > 0 {
+                        Text("\(Int(phaseProgress * 100))%")
+                            .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(.white.opacity(0.55))
+                    }
+                }
+            }
+            .padding(.horizontal, 4)
+
+            // Cycled witty message
+            Text(batchQuirkyMessage)
+                .font(.system(size: 14, weight: .regular))
+                .italic()
+                .foregroundStyle(.white.opacity(0.5))
                 .multilineTextAlignment(.center)
+                .frame(minHeight: 44)
+                .id("batch-\(quirkyIndex)-\(vm.batchCurrent)")
+                .transition(.opacity)
+
+            // Helper text
+            HStack(spacing: 6) {
+                Image(systemName: "bell.badge")
+                    .font(.system(size: 11))
+                Text("Background the app — we'll ping you when it's done.")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(.white.opacity(0.32))
+            .multilineTextAlignment(.center)
         }
         .padding(.vertical, 20)
+        .frame(maxWidth: .infinity)
+        .animation(.easeInOut(duration: 0.25), value: quirkyIndex)
+    }
+
+    private var batchStepPills: some View {
+        HStack(spacing: 6) {
+            if vm.batchTotal <= 8 {
+                ForEach(0..<vm.batchTotal, id: \.self) { i in
+                    Capsule()
+                        .fill(pillColor(forIndex: i))
+                        .frame(width: i == vm.batchCurrent - 1 ? 24 : 8, height: 8)
+                        .animation(.spring(response: 0.4, dampingFraction: 0.7), value: vm.batchCurrent)
+                }
+            } else {
+                Capsule()
+                    .fill(.white.opacity(0.08))
+                    .overlay(
+                        GeometryReader { geo in
+                            Capsule()
+                                .fill(Color.accentColor)
+                                .frame(width: geo.size.width * CGFloat(vm.batchCurrent) / CGFloat(vm.batchTotal))
+                                .animation(.linear(duration: 0.3), value: vm.batchCurrent)
+                        }
+                    )
+                    .frame(height: 6)
+            }
+        }
+        .frame(height: 12)
+    }
+
+    private func pillColor(forIndex i: Int) -> Color {
+        let current = vm.batchCurrent - 1
+        if i < current { return .accentColor }
+        if i == current { return .accentColor }
+        return .white.opacity(0.12)
+    }
+
+    private var phaseProgress: Double {
+        switch vm.status {
+        case .downloadingVideo(let p): return p
+        case .transcribing(let p): return p
+        default: return 0
+        }
+    }
+
+    private var phaseTitle: String {
+        switch vm.status {
+        case .fetchingCaptions: return "Fetching captions"
+        case .downloadingVideo: return "Downloading video"
+        case .transcribing: return "Transcribing audio"
+        default: return "Working"
+        }
+    }
+
+    private var batchQuirkyMessage: String {
+        switch vm.status {
+        case .fetchingCaptions, .downloadingVideo:
+            return fetchMessages[quirkyIndex % fetchMessages.count]
+        case .transcribing:
+            return transcribeMessages[quirkyIndex % transcribeMessages.count]
+        default:
+            return fetchMessages[quirkyIndex % fetchMessages.count]
+        }
     }
 
     private var phaseLabel: String {
@@ -456,25 +599,41 @@ struct AddTranscriptStatusView: View {
 
     private var modelBanner: some View {
         VStack(spacing: 10) {
-            Text("TikTok / Instagram needs a one-time transcription engine download (~150MB)")
+            Text("TikTok, Instagram, and YouTube Shorts need a one-time engine download (~150MB). Stays on your phone after that.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Button {
                 Task { await vm.downloadWhisperModel() }
             } label: {
-                HStack(spacing: 8) {
+                Group {
                     if vm.isDownloadingModel {
-                        ProgressView().tint(.white).scaleEffect(0.85)
-                        Text("Downloading... don't close the app")
+                        VStack(spacing: 8) {
+                            HStack {
+                                Text("Downloading transcription engine")
+                                    .font(.callout.weight(.semibold))
+                                Spacer()
+                                Text("\(Int(vm.modelDownloadProgress * 100))%")
+                                    .font(.callout.monospacedDigit().weight(.semibold))
+                            }
+                            ProgressView(value: vm.modelDownloadProgress)
+                                .tint(.white)
+                            Text("Don't close the app — this is a one-time download")
+                                .font(.caption2)
+                                .foregroundStyle(.white.opacity(0.8))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     } else {
-                        Image(systemName: "arrow.down.circle")
-                        Text("Download Transcription Engine (~150MB)")
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.down.circle")
+                            Text("Download Transcription Engine (~150MB)")
+                                .fontWeight(.semibold)
+                        }
                     }
                 }
-                .fontWeight(.semibold)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
+                .padding(.horizontal, 16)
                 .background(Color.orange, in: RoundedRectangle(cornerRadius: 12))
                 .foregroundStyle(.white)
             }
@@ -482,13 +641,78 @@ struct AddTranscriptStatusView: View {
         }
     }
 
+    @ViewBuilder
     private func errorBanner(_ msg: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-            Text(msg).font(.footnote).foregroundStyle(.white)
+        let recovery = recoveryActions(for: msg)
+        EducationalBanner(
+            tone: .warning,
+            icon: "exclamationmark.triangle.fill",
+            title: "Couldn't transcribe",
+            message: msg,
+            primary: recovery.primary,
+            secondary: recovery.secondary
+        )
+    }
+
+    private func safariSignInBanner(_ provider: TranscriptViewModel.SafariProvider) -> some View {
+        EducationalBanner(
+            tone: .info,
+            icon: "person.badge.key.fill",
+            title: "Sign in to \(provider.displayName)",
+            message: "ReSerch needs an in-app sign-in so it can read \(provider.displayName) on your device. Your password never leaves the secure system sign-in form. One tap, and every link after that just works.",
+            primary: .init(label: "Sign in") {
+                signInProvider = provider
+            },
+            secondary: .init(label: "Try anyway") {
+                Task { await vm.fetchTranscriptBypassingPreflight() }
+            }
+        )
+    }
+
+    /// Maps the raw error message string back to a contextual recovery pair. Stays simple
+    /// (substring match) because `FetchStatus.error(String)` doesn't carry a typed error
+    /// — the underlying errors live in different enums (`ExtractError`, `FetchError`, etc).
+    private func recoveryActions(for message: String) -> (primary: EducationalBanner.Action?, secondary: EducationalBanner.Action?) {
+        let lower = message.lowercased()
+        let retry = EducationalBanner.Action(label: "Try again") {
+            Task { await vm.fetchTranscript() }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
+
+        // YouTube-specific paths first — these messages explicitly mention captions / blocking
+        if lower.contains("captions") {
+            return (
+                EducationalBanner.Action(label: "Try a Shorts link") {},
+                retry
+            )
+        }
+        if lower.contains("rate-limiting") || lower.contains("blocked this request") {
+            return (retry, nil)
+        }
+
+        // Cookie-related failures (post-pre-flight, e.g. expired session) — re-present the
+        // in-app sign-in sheet for the platform the user is trying to transcribe.
+        if lower.contains("private") || lower.contains("require login") || lower.contains("login") {
+            let provider: TranscriptViewModel.SafariProvider = {
+                if let url = URL(string: vm.urlInput),
+                   let host = url.host?.lowercased(),
+                   host.contains("youtube.com") || host.contains("youtu.be") {
+                    return .youtube
+                }
+                return .instagram
+            }()
+            return (
+                EducationalBanner.Action(label: "Sign in again") {
+                    signInProvider = provider
+                },
+                retry
+            )
+        }
+
+        // Network / generic
+        if lower.contains("connection") || lower.contains("network") {
+            return (retry, nil)
+        }
+
+        return (retry, nil)
     }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 @main
 struct ReSerchApp: App {
@@ -7,6 +8,18 @@ struct ReSerchApp: App {
 
     init() {
         print("[ReSerch] ReSerchApp.init — binary is live")
+        IAPManager.shared.start()
+
+        #if DEBUG
+        if CommandLine.arguments.contains("-PaywallOnLaunch") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                PaywallPresenter.present()
+            }
+        }
+        if CommandLine.arguments.contains("-FillGateOnLaunch") {
+            ExportGate.shared.debugFillToLimit()
+        }
+        #endif
     }
 
     var body: some Scene {
@@ -19,9 +32,9 @@ struct ReSerchApp: App {
                 }
         }
         .onChange(of: scenePhase) { _, newPhase in
-            // Synchronous save when app backgrounds so data survives process termination
             if newPhase == .background || newPhase == .inactive {
                 vm.saveHistory()
+                UIApplication.shared.ignoreSnapshotOnNextApplicationLaunch()
             }
         }
     }

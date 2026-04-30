@@ -78,7 +78,8 @@ struct TranscriptResult: Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         title         = try c.decode(String.self,    forKey: .title)
-        editableTitle = try c.decode(String.self,    forKey: .editableTitle)
+        // Older entries (pre-build with editableTitle field) fall back to title
+        editableTitle = (try? c.decode(String.self, forKey: .editableTitle)) ?? title
         author        = try c.decode(String.self,    forKey: .author)
         handle        = try c.decode(String.self,    forKey: .handle)
         platform      = try c.decode(String.self,    forKey: .platform)

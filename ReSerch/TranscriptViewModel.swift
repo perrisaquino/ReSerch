@@ -2,6 +2,7 @@ import SwiftUI
 import Combine
 import UIKit
 
+@MainActor
 @Observable
 final class TranscriptViewModel {
     var urlInput: String = ""
@@ -46,11 +47,47 @@ final class TranscriptViewModel {
     enum FetchStatus: Equatable {
         case idle
         case needsModel
+        case needsSafariSignIn(SafariProvider)
         case fetchingCaptions
         case downloadingVideo(Double)
         case transcribing(Double)
         case done
         case error(String)
+    }
+
+    /// Platforms whose extractors depend on the app's WKWebsiteDataStore.default() cookie store.
+    /// Drives the pre-flight in-app sign-in sheet so users don't wait 20 seconds for an
+    /// extractor timeout.
+    enum SafariProvider: Equatable, Identifiable {
+        case instagram
+        case youtube
+
+        var id: String {
+            switch self {
+            case .instagram: return "instagram"
+            case .youtube: return "youtube"
+            }
+        }
+
+        var displayName: String {
+            switch self {
+            case .instagram: return "Instagram"
+            case .youtube: return "YouTube"
+            }
+        }
+
+        /// Deep-links into Safari at the platform's sign-in screen, not the homepage,
+        /// so the user lands one tap away from logging in.
+        var safariURL: URL {
+            switch self {
+            case .instagram:
+                return URL(string: "https://www.instagram.com/accounts/login/")!
+            case .youtube:
+                // Google's accounts flow with continue=youtube → after sign-in Safari lands
+                // on youtube.com with the auth cookies set, exactly what ReSerch needs.
+                return URL(string: "https://accounts.google.com/ServiceLogin?service=youtube&continue=https%3A%2F%2Fwww.youtube.com%2F")!
+            }
+        }
     }
 
     func cancel() {
@@ -78,6 +115,16 @@ final class TranscriptViewModel {
         rLog(.ok, step: "Whisper", "Model download complete, retrying transcript...")
         await fetchTranscript()
     }
+
+    /// Bypass the Safari sign-in pre-flight. Used by the "Try anyway" secondary action
+    /// on the `needsSafariSignIn` banner so power users with edge-case cookie state can
+    /// still attempt transcription.
+    func fetchTranscriptBypassingPreflight() async {
+        skipNextPreflight = true
+        await fetchTranscript()
+    }
+
+    private var skipNextPreflight = false
 
     func fetchTranscript() async {
         let raw = urlInput.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -110,12 +157,32 @@ final class TranscriptViewModel {
                     transcriptResult = try await YouTubeFetcher.fetch(videoId: videoId, originalURL: raw)
                     rLog(.ok, step: "YouTube", "Got transcript: \(transcriptResult.transcript.count) chars ⏱ \(elapsed(since: tYT))")
 
-                case .tiktok, .instagram, .twitter, .threads, .unknown:
+                case .tiktok, .instagram, .twitter, .threads, .youtubeShorts, .unknown:
                     rLog(step: "Whisper", "Model ready: \(whisperTranscriber.isModelReady())")
                     guard whisperTranscriber.isModelReady() else {
                         status = .needsModel
                         return
                     }
+
+                    // Pre-flight cookie check — surfaces a clean "Sign in to Safari" banner
+                    // immediately instead of letting the extractor run for 20s and time out.
+                    let bypass = self.skipNextPreflight
+                    self.skipNextPreflight = false
+                    if !bypass {
+                        switch platform {
+                        case .instagram, .threads:
+                            if await !CookieChecker.hasInstagramSession() {
+                                rLog(.warn, step: "Pre-flight", "No Instagram session in Safari")
+                                status = .needsSafariSignIn(.instagram)
+                                return
+                            }
+                        // YouTube Shorts uses YouTubeKit (yt-dlp port) which fetches the
+                        // public player API directly — no sign-in required.
+                        default:
+                            break
+                        }
+                    }
+
                     rLog(step: "Extract", "Fetching page + extracting video URL...")
                     let tExtract = Date()
                     let meta = try await VideoExtractor.extractVideoMetadata(from: url, platform: platform)
@@ -125,16 +192,16 @@ final class TranscriptViewModel {
                     status = .downloadingVideo(0)
                     rLog(step: "Download", "Downloading video...")
                     let tDownload = Date()
-                    let audioURL = try await VideoExtractor.downloadAudio(from: meta.videoURL) { [weak self] p in
-                        self?.status = .downloadingVideo(p)
+                    let audioURL = try await VideoExtractor.downloadAudio(from: meta.videoURL) { p in
+                        Task { @MainActor [weak self] in self?.status = .downloadingVideo(p) }
                     }
                     rLog(.ok, step: "Download", "Audio ready ⏱ \(elapsed(since: tDownload)) — \(audioURL.lastPathComponent)")
 
                     status = .transcribing(0)
                     rLog(step: "Whisper", "Starting transcription...")
                     let tWhisper = Date()
-                    let transcript = try await whisperTranscriber.transcribe(audioURL: audioURL) { [weak self] p in
-                        self?.status = .transcribing(p)
+                    let transcript = try await whisperTranscriber.transcribe(audioURL: audioURL) { p in
+                        Task { @MainActor [weak self] in self?.status = .transcribing(p) }
                     }
                     rLog(.ok, step: "Whisper", "Done ⏱ \(elapsed(since: tWhisper)) — \(transcript.count) chars")
                     try? FileManager.default.removeItem(at: audioURL)
@@ -146,6 +213,7 @@ final class TranscriptViewModel {
                     case .instagram: platformName = "Instagram"
                     case .twitter: platformName = "Twitter"
                     case .threads: platformName = "Threads"
+                    case .youtubeShorts: platformName = "YouTube Shorts"
                     default: platformName = "Video"
                     }
 
@@ -192,6 +260,12 @@ final class TranscriptViewModel {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty && URL(string: $0) != nil }
 
+        await fetchBatch(urls: urls, playlistName: nil)
+    }
+
+    /// Bulk-transcribe a specific list of URLs. When `playlistName` is set, the completion
+    /// notification is scoped to that playlist ("Playlist 'Foo' — N transcripts saved").
+    func fetchBatch(urls: [String], playlistName: String?) async {
         guard !urls.isEmpty else { return }
 
         batchTotal = urls.count
@@ -219,7 +293,7 @@ final class TranscriptViewModel {
         batchCurrent = 0
         UIApplication.shared.endBackgroundTask(bgTask)
 
-        NotificationManager.sendBatchComplete(count: saved, failed: failed)
+        NotificationManager.sendBatchComplete(count: saved, failed: failed, playlistName: playlistName)
     }
 
     func saveToHistory(_ result: TranscriptResult) {

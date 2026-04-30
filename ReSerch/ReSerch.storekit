@@ -1,0 +1,77 @@
+{
+  "identifier" : "A7B2E9C4-1D3F-4E5A-8B6C-9F0E1A2B3C4D",
+  "nonRenewingSubscriptions" : [],
+  "products" : [
+    {
+      "displayPrice" : "29.99",
+      "familyShareable" : false,
+      "internalID" : "B1A2C3D4-E5F6-7890-1234-567890ABCDEF",
+      "localizations" : [
+        {
+          "description" : "Unlock unlimited transcript exports, forever. One payment, no subscription. Markdown and Rich Text export to any notes app.",
+          "displayName" : "Lifetime Pro",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.perrisaquino.reserch.lifetime",
+      "referenceName" : "ReSerch Pro Lifetime",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_storeKitErrors" : [
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Load Products"
+      },
+      {
+        "current" : null,
+        "enabled" : false,
+        "name" : "Purchase"
+      }
+    ]
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "C2B3D4E5-F6A7-8901-2345-67890ABCDEF1",
+      "localizations" : [],
+      "name" : "ReSerch Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [
+            {
+              "displayPrice" : "0.00",
+              "internalID" : "D3C4E5F6-A7B8-9012-3456-7890ABCDEF12",
+              "paymentMode" : "free",
+              "referenceName" : "Livestream Free Month",
+              "subscriptionPeriod" : "P1M"
+            }
+          ],
+          "displayPrice" : "4.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "E4D5F6A7-B8C9-0123-4567-890ABCDEF123",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Unlimited transcript exports, billed monthly. Cancel anytime. Markdown and Rich Text export to any notes app.",
+              "displayName" : "Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.perrisaquino.reserch.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "ReSerch Pro Monthly",
+          "subscriptionGroupID" : "C2B3D4E5-F6A7-8901-2345-67890ABCDEF1",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

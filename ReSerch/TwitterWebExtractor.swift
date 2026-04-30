@@ -23,11 +23,9 @@ final class TwitterWebExtractor: NSObject {
         }
     }
 
-    deinit {
-        pollTimer?.invalidate()
-        webView?.stopLoading()
-        webView?.removeFromSuperview()
-    }
+    // resolve() handles all UIKit/timer cleanup on the MainActor before releasing
+    // the web view. Doing it here would run on whatever thread releases the last
+    // reference, which crashes UIKit calls under Swift 6.
 
     func extract(from url: URL) async -> URL? {
         await withCheckedContinuation { cont in

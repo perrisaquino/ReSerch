@@ -18,6 +18,8 @@ struct TranscriptDetailView: View {
     @State private var pendingHighlightOffset: Int?
     @State private var showNoteInput = false
     @State private var showEditorComment = false
+    @State private var gate = ExportGate.shared
+    @State private var showPaywall = false
 
     private var youTubeVideoId: String? {
         guard let url = URL(string: entry.result.url) else { return nil }
@@ -53,6 +55,7 @@ struct TranscriptDetailView: View {
             .toolbar { toolbarContent }
             .safeAreaInset(edge: .bottom) { if !isEditing { bottomBar } }
             .preferredColorScheme(.dark)
+            .fullScreenCover(isPresented: $showPaywall) { PaywallView() }
             .sheet(isPresented: $showAnnotations) {
                 AnnotationsPanel(annotations: $entry.result.annotations, transcriptText: entry.result.transcript)
                     .onDisappear { vm.updateEntry(entry) }
@@ -439,25 +442,30 @@ struct TranscriptDetailView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 10) {
-            // MD / Rich mode pill
-            HStack(spacing: 0) {
-                modeTab(label: "MD",   active: !stylePrefs.richTextMode) {
-                    stylePrefs.richTextMode = false; stylePrefs.save()
+                // MD / Rich mode pill
+                HStack(spacing: 0) {
+                    modeTab(label: "MD",   active: !stylePrefs.richTextMode) {
+                        stylePrefs.richTextMode = false; stylePrefs.save()
+                    }
+                    modeTab(label: "Rich", active: stylePrefs.richTextMode) {
+                        stylePrefs.richTextMode = true; stylePrefs.save()
+                    }
                 }
-                modeTab(label: "Rich", active: stylePrefs.richTextMode) {
-                    stylePrefs.richTextMode = true; stylePrefs.save()
-                }
-            }
-            .background(Color(white: 0.10), in: RoundedRectangle(cornerRadius: 8))
+                .background(Color(white: 0.10), in: RoundedRectangle(cornerRadius: 8))
 
             // Copy button — full-width, proper button shape
             Button {
+                guard gate.canExport() else {
+                    showPaywall = true
+                    return
+                }
                 if stylePrefs.richTextMode,
                    let attrStr = RichTextFormatter.build(entry.result) {
                     UIPasteboard.general.setObjects([attrStr])
                 } else {
                     UIPasteboard.general.string = vm.markdownFor(entry)
                 }
+                gate.recordExport()
                 copied = true
                 Task {
                     try? await Task.sleep(for: .seconds(2))
@@ -479,31 +487,20 @@ struct TranscriptDetailView: View {
                 .animation(.easeInOut(duration: 0.18), value: copied)
             }
 
-            // Share button
-            if stylePrefs.richTextMode,
-               let attrStr = RichTextFormatter.build(entry.result),
-               let rtfData = RichTextFormatter.rtfData(from: attrStr) {
-                ShareLink(
-                    item: RichText(data: rtfData),
-                    preview: SharePreview(entry.title, image: Image(systemName: "doc.richtext"))
-                ) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color(white: 0.72))
-                        .frame(width: 40, height: 40)
-                        .background(Color(white: 0.14), in: Circle())
+            // Share button — gated; presents activity sheet only after gate check
+            Button {
+                guard gate.canExport() else {
+                    showPaywall = true
+                    return
                 }
-            } else {
-                ShareLink(
-                    item: vm.markdownFor(entry),
-                    preview: SharePreview(entry.title, image: Image(systemName: "doc.text"))
-                ) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color(white: 0.72))
-                        .frame(width: 40, height: 40)
-                        .background(Color(white: 0.14), in: Circle())
-                }
+                presentShareSheet()
+                gate.recordExport()
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color(white: 0.72))
+                    .frame(width: 40, height: 40)
+                    .background(Color(white: 0.14), in: Circle())
             }
         }
         .padding(.horizontal, 16)
@@ -516,6 +513,26 @@ struct TranscriptDetailView: View {
             )
             .ignoresSafeArea(edges: .bottom)
         )
+    }
+
+    private func presentShareSheet() {
+        let activityItems: [Any]
+        if stylePrefs.richTextMode,
+           let attrStr = RichTextFormatter.build(entry.result) {
+            activityItems = [attrStr]
+        } else {
+            activityItems = [vm.markdownFor(entry)]
+        }
+        let av = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        // iPad popover anchor — required on iPad, harmless on iPhone.
+        if let popover = av.popoverPresentationController,
+           let window = UIApplication.shared.keyForegroundWindow {
+            popover.sourceView = window
+            popover.sourceRect = CGRect(x: window.bounds.midX, y: window.bounds.maxY - 60, width: 0, height: 0)
+            popover.permittedArrowDirections = []
+        }
+        guard let root = UIApplication.shared.keyForegroundWindow?.rootViewController else { return }
+        root.topmostPresentedViewController.present(av, animated: true)
     }
 
     private func modeTab(label: String, active: Bool, action: @escaping () -> Void) -> some View {

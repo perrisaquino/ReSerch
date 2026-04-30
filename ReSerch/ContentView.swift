@@ -4,10 +4,12 @@ struct ContentView: View {
     var vm: TranscriptViewModel
     @State private var showAdd = false
     @State private var selectedEntry: TranscriptEntry? = nil
-    @State private var showDebug = false
     @State private var showSettings = false
     @State private var selectionMode = false
     @State private var selectedIDs: Set<UUID> = []
+    @State private var gate = ExportGate.shared
+    @State private var showPaywall = false
+    @State private var showOnboarding = !OnboardingView.hasCompleted
 
     var body: some View {
         NavigationStack {
@@ -27,14 +29,38 @@ struct ContentView: View {
             .sheet(item: $selectedEntry) { entry in
                 TranscriptDetailView(entry: entry, vm: vm)
             }
-            .sheet(isPresented: $showDebug) {
-                DebugView()
-            }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
         }
         .preferredColorScheme(.dark)
+        .fullScreenCover(isPresented: $showPaywall) {
+            PaywallView()
+        }
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingView(isPresented: $showOnboarding)
+        }
+        .onChange(of: showPaywall) { _, newValue in
+            NSLog("[ContentView] showPaywall → \(newValue)")
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showPaywall)) { _ in
+            NSLog("[ContentView] received showPaywall notification (current=\(showPaywall))")
+            guard !showPaywall else {
+                NSLog("[ContentView] paywall already shown, ignoring")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                NSLog("[ContentView] setting showPaywall = true")
+                showPaywall = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showOnboarding)) { _ in
+            print("[ContentView] received showOnboarding notification")
+            guard !showOnboarding else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                showOnboarding = true
+            }
+        }
     }
 
     @ToolbarContentBuilder
@@ -42,12 +68,6 @@ struct ContentView: View {
         ToolbarItem(placement: .topBarTrailing) {
             Button { showSettings = true } label: {
                 Image(systemName: "gearshape")
-                    .foregroundStyle(.secondary)
-            }
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-            Button { showDebug = true } label: {
-                Image(systemName: "ladybug")
                     .foregroundStyle(.secondary)
             }
         }
@@ -62,39 +82,44 @@ struct ContentView: View {
 
     private var bulkBar: some View {
         HStack(spacing: 12) {
-            Button {
-                let markdown = vm.history
-                    .filter { selectedIDs.contains($0.id) }
-                    .map { vm.markdownFor($0) }
-                    .joined(separator: "\n\n---\n\n")
-                UIPasteboard.general.string = markdown
-                selectionMode = false
-                selectedIDs.removeAll()
-            } label: {
-                Label("Copy \(selectedIDs.count) Transcript\(selectedIDs.count == 1 ? "" : "s")", systemImage: "doc.on.doc")
-                    .fontWeight(.semibold)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12))
-                    .foregroundStyle(.white)
-            }
-
-            Button {
-                selectedIDs.forEach { id in
-                    if let entry = vm.history.first(where: { $0.id == id }) {
-                        vm.deleteEntry(entry)
+                Button {
+                    guard gate.canExport() else {
+                        PaywallPresenter.present()
+                        return
                     }
+                    let markdown = vm.history
+                        .filter { selectedIDs.contains($0.id) }
+                        .map { vm.markdownFor($0) }
+                        .joined(separator: "\n\n---\n\n")
+                    UIPasteboard.general.string = markdown
+                    gate.recordExport()
+                    selectionMode = false
+                    selectedIDs.removeAll()
+                } label: {
+                    Label("Copy \(selectedIDs.count) Transcript\(selectedIDs.count == 1 ? "" : "s")", systemImage: "doc.on.doc")
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12))
+                        .foregroundStyle(.white)
                 }
-                selectionMode = false
-                selectedIDs.removeAll()
-            } label: {
-                Image(systemName: "trash")
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
-                    .frame(width: 52, height: 52)
-                    .background(Color.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 12))
+
+                Button {
+                    selectedIDs.forEach { id in
+                        if let entry = vm.history.first(where: { $0.id == id }) {
+                            vm.deleteEntry(entry)
+                        }
+                    }
+                    selectionMode = false
+                    selectedIDs.removeAll()
+                } label: {
+                    Image(systemName: "trash")
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.white)
+                        .frame(width: 52, height: 52)
+                        .background(Color.red.opacity(0.8), in: RoundedRectangle(cornerRadius: 12))
+                }
             }
-        }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .background(.ultraThinMaterial)
@@ -179,7 +204,14 @@ struct ContentView: View {
     // MARK: - Actions
 
     private func copyMarkdown(for entry: TranscriptEntry) {
+        print("[Copy] row copy tapped")
+        guard gate.canExport() else {
+            print("[Copy] gate blocked → showing paywall")
+            PaywallPresenter.present()
+            return
+        }
         UIPasteboard.general.string = vm.markdownFor(entry)
+        gate.recordExport()
     }
 
 }
@@ -350,9 +382,14 @@ struct TranscriptRow: View {
             Button {
                 let md = vm_markdown()
                 let av = UIActivityViewController(activityItems: [md], applicationActivities: nil)
-                if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let root = scene.windows.first?.rootViewController {
-                    root.present(av, animated: true)
+                if let popover = av.popoverPresentationController,
+                   let window = UIApplication.shared.keyForegroundWindow {
+                    popover.sourceView = window
+                    popover.sourceRect = CGRect(x: window.bounds.midX, y: window.bounds.maxY - 60, width: 0, height: 0)
+                    popover.permittedArrowDirections = []
+                }
+                if let root = UIApplication.shared.keyForegroundWindow?.rootViewController {
+                    root.topmostPresentedViewController.present(av, animated: true)
                 }
             } label: {
                 Label("Share", systemImage: "square.and.arrow.up")
