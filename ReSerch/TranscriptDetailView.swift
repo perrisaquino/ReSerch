@@ -339,7 +339,7 @@ struct TranscriptDetailView: View {
                     Image(systemName: "square.and.pencil")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(.white.opacity(0.55))
-                    Text("Add a note for this whole transcript")
+                    Text("Add a transcript note")
                         .font(.system(size: 14))
                         .foregroundStyle(.white.opacity(0.55))
                     Spacer()

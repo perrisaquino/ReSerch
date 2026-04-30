@@ -13,6 +13,7 @@ struct NotebookDetailView: View {
     @State private var showColorPicker = false
     @State private var showDeleteConfirm = false
     @State private var renameText: String = ""
+    @State private var singleMoveEntry: TranscriptEntry? = nil
 
     init(notebook: Notebook, vm: TranscriptViewModel) {
         self.notebookID = notebook.id
@@ -59,10 +60,12 @@ struct NotebookDetailView: View {
                                 entry: entry,
                                 isSelected: false,
                                 selectionMode: false,
+                                notebook: nb,
                                 onTap: { selectedEntry = entry },
                                 onCopy: { copyMarkdown(for: entry) },
                                 onDelete: { vm.deleteEntry(entry) },
-                                onRename: { vm.renameEntry(entry, to: $0) }
+                                onRename: { vm.renameEntry(entry, to: $0) },
+                                onMoveToNotebook: { singleMoveEntry = entry }
                             )
                             Divider()
                                 .background(Color.white.opacity(0.08))
@@ -107,6 +110,9 @@ struct NotebookDetailView: View {
         }
         .sheet(item: $selectedEntry) { entry in
             TranscriptDetailView(entry: entry, vm: vm)
+        }
+        .sheet(item: $singleMoveEntry) { entry in
+            MoveToNotebookSheet(vm: vm, selectedIDs: [entry.id])
         }
         .alert("Rename notebook", isPresented: $showRename) {
             TextField("Name", text: $renameText)
@@ -234,6 +240,7 @@ private struct NotebookColorPickerSheet: View {
 struct UnfiledView: View {
     var vm: TranscriptViewModel
     @State private var selectedEntry: TranscriptEntry? = nil
+    @State private var singleMoveEntry: TranscriptEntry? = nil
 
     private var entries: [TranscriptEntry] {
         vm.unfiledTranscripts
@@ -261,10 +268,12 @@ struct UnfiledView: View {
                                 entry: entry,
                                 isSelected: false,
                                 selectionMode: false,
+                                notebook: nil,
                                 onTap: { selectedEntry = entry },
                                 onCopy: { copyMarkdown(for: entry) },
                                 onDelete: { vm.deleteEntry(entry) },
-                                onRename: { vm.renameEntry(entry, to: $0) }
+                                onRename: { vm.renameEntry(entry, to: $0) },
+                                onMoveToNotebook: { singleMoveEntry = entry }
                             )
                             Divider()
                                 .background(Color.white.opacity(0.08))
@@ -277,6 +286,9 @@ struct UnfiledView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $selectedEntry) { entry in
             TranscriptDetailView(entry: entry, vm: vm)
+        }
+        .sheet(item: $singleMoveEntry) { entry in
+            MoveToNotebookSheet(vm: vm, selectedIDs: [entry.id])
         }
         .preferredColorScheme(.dark)
     }

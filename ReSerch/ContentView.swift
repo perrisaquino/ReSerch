@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var selectionMode = false
     @State private var selectedIDs: Set<UUID> = []
     @State private var showMoveToNotebook = false
+    @State private var singleMoveEntry: TranscriptEntry? = nil
     @State private var gate = ExportGate.shared
     @State private var showPaywall = false
     @State private var showOnboarding = !OnboardingView.hasCompleted
@@ -42,6 +43,9 @@ struct ContentView: View {
                         selectedIDs.removeAll()
                     }
                 )
+            }
+            .sheet(item: $singleMoveEntry) { entry in
+                MoveToNotebookSheet(vm: vm, selectedIDs: [entry.id])
             }
         }
         .preferredColorScheme(.dark)
@@ -164,6 +168,7 @@ struct ContentView: View {
                                 entry: entry,
                                 isSelected: selectedIDs.contains(entry.id),
                                 selectionMode: selectionMode,
+                                notebook: vm.notebook(for: entry.notebookID),
                                 onTap: {
                                     if selectionMode {
                                         if selectedIDs.contains(entry.id) {
@@ -177,7 +182,8 @@ struct ContentView: View {
                                 },
                                 onCopy: { copyMarkdown(for: entry) },
                                 onDelete: { vm.deleteEntry(entry) },
-                                onRename: { vm.renameEntry(entry, to: $0) }
+                                onRename: { vm.renameEntry(entry, to: $0) },
+                                onMoveToNotebook: { singleMoveEntry = entry }
                             )
                             Divider()
                                 .background(Color.white.opacity(0.08))
@@ -247,10 +253,14 @@ struct TranscriptRow: View {
     let entry: TranscriptEntry
     var isSelected: Bool = false
     var selectionMode: Bool = false
+    /// Optional notebook the entry belongs to. Drives the inline indicator chip.
+    var notebook: Notebook? = nil
     let onTap: () -> Void
     let onCopy: () -> Void
     let onDelete: () -> Void
     let onRename: (String) -> Void
+    /// Triggered from the row's "..." menu. Caller decides how to present the move sheet.
+    var onMoveToNotebook: (() -> Void)? = nil
 
     @State private var showCopied = false
     @State private var showRenameAlert = false
@@ -363,13 +373,32 @@ struct TranscriptRow: View {
                 }
             }
 
-            if let dur = entry.result.duration {
-                HStack(spacing: 4) {
-                    Image(systemName: "clock")
-                    Text(dur)
+            // Notebook chip + duration on one row when either is present
+            if notebook != nil || entry.result.duration != nil {
+                HStack(spacing: 8) {
+                    if let nb = notebook {
+                        HStack(spacing: 5) {
+                            Capsule()
+                                .fill(nb.color)
+                                .frame(width: 3, height: 10)
+                            Text(nb.name)
+                                .font(.caption2)
+                                .foregroundStyle(.white.opacity(0.65))
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.white.opacity(0.06), in: Capsule())
+                    }
+                    if let dur = entry.result.duration {
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock")
+                            Text(dur)
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.gray)
+                    }
                 }
-                .font(.caption2)
-                .foregroundStyle(.gray)
             }
 
             // Transcript preview
@@ -402,6 +431,14 @@ struct TranscriptRow: View {
                 showRenameAlert = true
             } label: {
                 Label("Rename", systemImage: "pencil")
+            }
+
+            if let onMoveToNotebook {
+                Button {
+                    onMoveToNotebook()
+                } label: {
+                    Label(notebook == nil ? "Add to Notebook" : "Move to Notebook", systemImage: "folder")
+                }
             }
 
             Button {
