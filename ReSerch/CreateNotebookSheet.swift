@@ -64,7 +64,7 @@ struct CreateNotebookSheet: View {
 
                 Section {
                     TextField(
-                        "What's this notebook for? (optional)",
+                        "What's this notebook for?",
                         text: $notebookDescription,
                         axis: .vertical
                     )

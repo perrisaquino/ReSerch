@@ -128,7 +128,7 @@ struct NotebookDetailView: View {
                     Button {
                         exportAll(notebook: nb)
                     } label: {
-                        Label("Copy Combined Markdown", systemImage: "doc.on.doc")
+                        Label("Copy All", systemImage: "doc.on.doc")
                     }
                     .disabled(entries.isEmpty)
                     Divider()
@@ -337,7 +337,7 @@ private struct NotebookDescriptionEditor: View {
                     .background(Color(red: 0.07, green: 0.09, blue: 0.13))
                     .overlay(alignment: .topLeading) {
                         if text.isEmpty {
-                            Text("What's this notebook for? E.g. \"Marketing tactics I want to test\" or \"Stand-up bits I'm developing\".")
+                            Text("What's this notebook for?")
                                 .font(.system(size: 15))
                                 .foregroundStyle(.white.opacity(0.35))
                                 .padding(.horizontal, 22)
