@@ -89,7 +89,7 @@ final class InstagramWebExtractor: NSObject {
 
         // Dict payload = tagged message: {kind: "api", data: {...}} or {kind: "videoURL", url: "..."}
         if let body = message.body as? [String: Any], let kind = body["kind"] as? String {
-            switch kind {
+            switch kind { 
             case "api":
                 if let data = body["data"] as? [String: Any] {
                     apiJSON = data

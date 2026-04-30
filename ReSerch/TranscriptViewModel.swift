@@ -140,6 +140,12 @@ final class TranscriptViewModel {
             return
         }
 
+        await withBackgroundTask(name: "reserch.fetch") {
+            await fetchTranscriptInner(raw: raw, url: url)
+        }
+    }
+
+    private func fetchTranscriptInner(raw: String, url: URL) async {
         currentTask?.cancel()
         result = nil
         status = .fetchingCaptions
@@ -270,6 +276,12 @@ final class TranscriptViewModel {
     /// Caller is responsible for ending security-scoped resource access AFTER this returns.
     /// `isVideo` controls whether we attempt thumbnail extraction.
     func transcribeLocalFile(_ fileURL: URL, displayName: String, isVideo: Bool) async {
+        await withBackgroundTask(name: "reserch.localfile") {
+            await transcribeLocalFileInner(fileURL, displayName: displayName, isVideo: isVideo)
+        }
+    }
+
+    private func transcribeLocalFileInner(_ fileURL: URL, displayName: String, isVideo: Bool) async {
         currentTask?.cancel()
         result = nil
 
@@ -353,10 +365,14 @@ final class TranscriptViewModel {
         batchCurrent = 0
         isBatchProcessing = true
 
-        // Ask iOS for extra time to keep running after user backgrounds the app
+        // Ask iOS for extra time to keep running after user backgrounds the app.
+        // Expiration handler MUST cancel in-flight work AND end the task — otherwise
+        // iOS may force-kill the process instead of suspending cleanly.
         var bgTask = UIBackgroundTaskIdentifier.invalid
-        bgTask = UIApplication.shared.beginBackgroundTask(withName: "reserch.batch") {
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "reserch.batch") { [weak self] in
+            self?.currentTask?.cancel()
             UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
         }
 
         var saved = 0
@@ -392,7 +408,10 @@ final class TranscriptViewModel {
         isBatchProcessing = false
         batchTotal = 0
         batchCurrent = 0
-        UIApplication.shared.endBackgroundTask(bgTask)
+        if bgTask != .invalid {
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
+        }
 
         NotificationManager.sendBatchComplete(count: saved, failed: failed, playlistName: playlistName)
     }
@@ -405,6 +424,29 @@ final class TranscriptViewModel {
         if !isBatchProcessing {
             status = .idle
         }
+    }
+
+    /// Wraps work in a `UIBackgroundTask` so iOS gives the app ~3 minutes of background
+    /// time after the user locks/backgrounds the device. The expiration handler cancels
+    /// the in-flight currentTask AND ends the background task — both required for iOS
+    /// to consider the app a good citizen. Without canceling the work, iOS may force-kill
+    /// the process instead of suspending cleanly.
+    @MainActor
+    private func withBackgroundTask<T>(name: String, _ work: () async throws -> T) async rethrows -> T {
+        var bgTask = UIBackgroundTaskIdentifier.invalid
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            // iOS is about to suspend us. Cancel the work so it doesn't run partially
+            // and leave state in a half-saved condition.
+            self?.currentTask?.cancel()
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
+        }
+        defer {
+            if bgTask != .invalid {
+                UIApplication.shared.endBackgroundTask(bgTask)
+            }
+        }
+        return try await work()
     }
 
     func saveToHistory(_ result: TranscriptResult) {

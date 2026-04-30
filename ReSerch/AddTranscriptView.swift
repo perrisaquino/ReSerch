@@ -185,22 +185,22 @@ struct AddTranscriptStatusView: View {
     @State private var signInProvider: TranscriptViewModel.SafariProvider? = nil
 
     private let fetchMessages = [
-        "Knocking on the server's door...",
-        "Asking the internet nicely...",
-        "Convincing the CDN to cooperate...",
-        "Untangling the HTML soup...",
-        "Extracting the good stuff...",
-        "Locating the video data...",
-        "Bribing the algorithm with compliments...",
-        "Speed-reading the entire page...",
-        "Pretending to be a browser, don't tell anyone...",
-        "Parsing JSON with my bare hands...",
-        "Following the redirects down the rabbit hole...",
-        "Decrypting the URL they really didn't want me to find...",
-        "The server is thinking. Servers need time too.",
-        "Negotiating with the Content Delivery Network...",
-        "Squinting at the page source...",
-        "Copy-pasting from the internet, professionally...",
+        "Looking up the video...",
+        "Finding the good parts...",
+        "Pulling things together...",
+        "Tracking it down...",
+        "Working on it...",
+        "Almost there...",
+        "Fetching the details...",
+        "Getting everything ready...",
+        "Just a moment...",
+        "Pulling the metadata...",
+        "One sec...",
+        "Hold tight...",
+        "Lining things up...",
+        "Loading the video info...",
+        "Setting things up...",
+        "Closing in on it...",
     ]
 
     private let transcribeMessages = [
