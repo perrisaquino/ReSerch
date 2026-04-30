@@ -12,9 +12,14 @@ struct CreateNotebookSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name: String = ""
     @State private var selectedColorHex: String? = Notebook.presetColors.first
+    @State private var notebookDescription: String = ""
 
     private var trimmedName: String {
         name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedDescription: String {
+        notebookDescription.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     var body: some View {
@@ -56,6 +61,19 @@ struct CreateNotebookSheet: View {
                 } header: {
                     Text("Color")
                 }
+
+                Section {
+                    TextField(
+                        "What's this notebook for? (optional)",
+                        text: $notebookDescription,
+                        axis: .vertical
+                    )
+                    .lineLimit(2...5)
+                } header: {
+                    Text("Context")
+                } footer: {
+                    Text("Briefly describe the purpose of this notebook. Appears at the top of the notebook view and in combined exports.")
+                }
             }
             .navigationTitle("New Notebook")
             .navigationBarTitleDisplayMode(.inline)
@@ -65,7 +83,11 @@ struct CreateNotebookSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Create") {
-                        let nb = vm.createNotebook(name: trimmedName, colorHex: selectedColorHex)
+                        let nb = vm.createNotebook(
+                            name: trimmedName,
+                            colorHex: selectedColorHex,
+                            notebookDescription: trimmedDescription.isEmpty ? nil : trimmedDescription
+                        )
                         onCreate?(nb)
                         dismiss()
                     }

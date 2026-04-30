@@ -403,7 +403,11 @@ final class TranscriptViewModel {
         guard !entries.isEmpty else {
             return "# \(notebook.name)\n\n(No transcripts in this notebook yet.)\n"
         }
-        let header = "# \(notebook.name)\n\n_\(entries.count) transcript\(entries.count == 1 ? "" : "s")_\n\n---\n\n"
+        var header = "# \(notebook.name)\n\n_\(entries.count) transcript\(entries.count == 1 ? "" : "s")_\n\n"
+        if let desc = notebook.notebookDescription, !desc.isEmpty {
+            header += "> \(desc.replacingOccurrences(of: "\n", with: "\n> "))\n\n"
+        }
+        header += "---\n\n"
         let body = entries.map { markdownFor($0) }.joined(separator: "\n\n---\n\n")
         return header + body
     }
@@ -463,9 +467,14 @@ final class TranscriptViewModel {
     }
 
     @discardableResult
-    func createNotebook(name: String, colorHex: String? = nil) -> Notebook {
+    func createNotebook(name: String, colorHex: String? = nil, notebookDescription: String? = nil) -> Notebook {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let nb = Notebook(name: trimmed, colorHex: colorHex)
+        let trimmedDesc = notebookDescription?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nb = Notebook(
+            name: trimmed,
+            colorHex: colorHex,
+            notebookDescription: (trimmedDesc?.isEmpty ?? true) ? nil : trimmedDesc
+        )
         notebooks.append(nb)
         sortNotebooks()
         saveNotebooksAsync()
@@ -484,6 +493,13 @@ final class TranscriptViewModel {
     func recolorNotebook(_ notebook: Notebook, to colorHex: String?) {
         guard let idx = notebooks.firstIndex(where: { $0.id == notebook.id }) else { return }
         notebooks[idx].colorHex = colorHex
+        saveNotebooksAsync()
+    }
+
+    func setNotebookDescription(_ notebook: Notebook, to description: String) {
+        let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let idx = notebooks.firstIndex(where: { $0.id == notebook.id }) else { return }
+        notebooks[idx].notebookDescription = trimmed.isEmpty ? nil : trimmed
         saveNotebooksAsync()
     }
 

@@ -10,12 +10,30 @@ struct Notebook: Identifiable, Hashable, Codable {
     var name: String
     var colorHex: String?
     let createdAt: Date
+    /// Optional context note describing the notebook's purpose.
+    /// Surfaces as a subtitle in NotebookDetailView and in combined-markdown exports.
+    var notebookDescription: String?
 
-    init(name: String, colorHex: String? = nil) {
+    enum CodingKeys: String, CodingKey {
+        case id, name, colorHex, createdAt, notebookDescription
+    }
+
+    init(name: String, colorHex: String? = nil, notebookDescription: String? = nil) {
         self.id = UUID()
         self.name = name
         self.colorHex = colorHex
         self.createdAt = Date()
+        self.notebookDescription = notebookDescription
+    }
+
+    // Custom decode so notebooks saved before this field existed still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        colorHex = try c.decodeIfPresent(String.self, forKey: .colorHex)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        notebookDescription = try c.decodeIfPresent(String.self, forKey: .notebookDescription)
     }
 
     func hash(into hasher: inout Hasher) { hasher.combine(id) }

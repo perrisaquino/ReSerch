@@ -5,6 +5,9 @@ import SwiftUI
 struct NotebooksView: View {
     var vm: TranscriptViewModel
     @State private var showCreate = false
+    @State private var renameTarget: Notebook? = nil
+    @State private var deleteTarget: Notebook? = nil
+    @State private var renameText: String = ""
 
     var body: some View {
         NavigationStack {
@@ -38,6 +41,35 @@ struct NotebooksView: View {
             .navigationDestination(for: UnfiledDestination.self) { _ in
                 UnfiledView(vm: vm)
             }
+            .alert("Rename notebook", isPresented: Binding(
+                get: { renameTarget != nil },
+                set: { if !$0 { renameTarget = nil } }
+            )) {
+                TextField("Name", text: $renameText)
+                Button("Cancel", role: .cancel) {}
+                Button("Save") {
+                    if let nb = renameTarget {
+                        vm.renameNotebook(nb, to: renameText)
+                    }
+                }
+            }
+            .confirmationDialog(
+                deleteTarget.map { "Delete \"\($0.name)\"?" } ?? "",
+                isPresented: Binding(
+                    get: { deleteTarget != nil },
+                    set: { if !$0 { deleteTarget = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Delete Notebook", role: .destructive) {
+                    if let nb = deleteTarget {
+                        vm.deleteNotebook(nb)
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Transcripts in this notebook will move back to Unfiled. They won't be deleted.")
+            }
         }
         .preferredColorScheme(.dark)
     }
@@ -52,6 +84,19 @@ struct NotebooksView: View {
                         notebookRow(notebook)
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        Button {
+                            renameText = notebook.name
+                            renameTarget = notebook
+                        } label: {
+                            Label("Rename", systemImage: "pencil")
+                        }
+                        Button(role: .destructive) {
+                            deleteTarget = notebook
+                        } label: {
+                            Label("Delete Notebook", systemImage: "trash")
+                        }
+                    }
                 }
 
                 // Unfiled is always present at the bottom so users can find loose transcripts.
