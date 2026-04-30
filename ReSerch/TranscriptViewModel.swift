@@ -329,7 +329,20 @@ final class TranscriptViewModel {
     }
 
     func markdownFor(_ entry: TranscriptEntry) -> String {
-        MarkdownFormatter.format(entry.result)
+        let nb = notebook(for: entry.notebookID)
+        return MarkdownFormatter.format(entry.result, notebook: nb, documentNote: entry.documentNote)
+    }
+
+    /// Compiles every transcript in `notebook` into a single markdown document, separated by `---`.
+    /// Useful for piping a research topic into a single Obsidian note.
+    func combinedMarkdown(for notebook: Notebook) -> String {
+        let entries = transcripts(in: notebook)
+        guard !entries.isEmpty else {
+            return "# \(notebook.name)\n\n(No transcripts in this notebook yet.)\n"
+        }
+        let header = "# \(notebook.name)\n\n_\(entries.count) transcript\(entries.count == 1 ? "" : "s")_\n\n---\n\n"
+        let body = entries.map { markdownFor($0) }.joined(separator: "\n\n---\n\n")
+        return header + body
     }
 
     // MARK: - Persistence

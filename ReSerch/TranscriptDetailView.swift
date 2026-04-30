@@ -18,6 +18,7 @@ struct TranscriptDetailView: View {
     @State private var pendingHighlightOffset: Int?
     @State private var showNoteInput = false
     @State private var showEditorComment = false
+    @State private var showDocNoteEditor = false
     @State private var gate = ExportGate.shared
     @State private var showPaywall = false
 
@@ -74,6 +75,12 @@ struct TranscriptDetailView: View {
             .sheet(isPresented: $showEditorComment) {
                 NoteInputSheet(highlightedText: editorActions.pendingCommentText) { comment in
                     editorActions.insertComment(comment)
+                }
+            }
+            .sheet(isPresented: $showDocNoteEditor) {
+                DocumentNoteEditor(initialText: entry.documentNote ?? "") { newText in
+                    entry.documentNote = newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : newText
+                    vm.setDocumentNote(entry, to: newText)
                 }
             }
             .onChange(of: isEditing) { _, editing in
@@ -305,6 +312,9 @@ struct TranscriptDetailView: View {
                 }
             }
 
+            Divider().background(Color.white.opacity(0.1))
+            documentNoteSection
+
             if !entry.result.caption.isEmpty {
                 Divider().background(Color.white.opacity(0.1))
                 captionSection
@@ -314,6 +324,74 @@ struct TranscriptDetailView: View {
             transcriptSection
         }
         .padding(20)
+    }
+
+    // MARK: - Document Note
+
+    @ViewBuilder
+    private var documentNoteSection: some View {
+        let note = entry.documentNote ?? ""
+        if note.isEmpty {
+            Button {
+                showDocNoteEditor = true
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.55))
+                    Text("Add a note for this whole transcript")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.white.opacity(0.55))
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.white.opacity(0.04))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Notes")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.gray)
+                        .textCase(.uppercase)
+                    Spacer()
+                    Button {
+                        showDocNoteEditor = true
+                    } label: {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color(white: 0.5))
+                            .padding(6)
+                            .background(Color(white: 0.15), in: RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+                Text(note)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white.opacity(0.04))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+                    )
+            }
+        }
     }
 
     private var statsRow: some View {
@@ -568,6 +646,72 @@ struct TranscriptDetailView: View {
         case "tiktok":    return URL(string: "https://www.tiktok.com/@\(handle)")
         case "instagram": return URL(string: "https://www.instagram.com/\(handle)")
         default:          return nil
+        }
+    }
+}
+
+// MARK: - Document Note Editor
+
+private struct DocumentNoteEditor: View {
+    let initialText: String
+    let onSave: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                TextEditor(text: $text)
+                    .focused($focused)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .background(Color(red: 0.07, green: 0.09, blue: 0.13))
+                    .overlay(alignment: .topLeading) {
+                        if text.isEmpty {
+                            Text("Your overall takeaway, the question you watched it for, the connection back to a project — anything that frames this whole transcript.")
+                                .font(.system(size: 15))
+                                .foregroundStyle(.white.opacity(0.35))
+                                .padding(.horizontal, 22)
+                                .padding(.top, 20)
+                                .allowsHitTesting(false)
+                        }
+                    }
+
+                HStack {
+                    Text("\(text.count) characters")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.4))
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(Color(red: 0.09, green: 0.11, blue: 0.15))
+            }
+            .background(Color(red: 0.07, green: 0.09, blue: 0.13).ignoresSafeArea())
+            .navigationTitle("Document Note")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Save") {
+                        onSave(text)
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+            .preferredColorScheme(.dark)
+            .onAppear {
+                text = initialText
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    focused = true
+                }
+            }
         }
     }
 }

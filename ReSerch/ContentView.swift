@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var selectionMode = false
     @State private var selectedIDs: Set<UUID> = []
+    @State private var showMoveToNotebook = false
     @State private var gate = ExportGate.shared
     @State private var showPaywall = false
     @State private var showOnboarding = !OnboardingView.hasCompleted
@@ -31,6 +32,16 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
+            }
+            .sheet(isPresented: $showMoveToNotebook) {
+                MoveToNotebookSheet(
+                    vm: vm,
+                    selectedIDs: selectedIDs,
+                    onMoved: {
+                        selectionMode = false
+                        selectedIDs.removeAll()
+                    }
+                )
             }
         }
         .preferredColorScheme(.dark)
@@ -102,6 +113,20 @@ struct ContentView: View {
                         .padding(.vertical, 14)
                         .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12))
                         .foregroundStyle(.white)
+                }
+
+                Button {
+                    showMoveToNotebook = true
+                } label: {
+                    Image(systemName: "folder")
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.white)
+                        .frame(width: 52, height: 52)
+                        .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
+                        )
                 }
 
                 Button {

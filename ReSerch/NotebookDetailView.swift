@@ -64,6 +64,12 @@ struct NotebookDetailView: View {
                     } label: {
                         Label("Change Color", systemImage: "paintpalette")
                     }
+                    Button {
+                        exportAll()
+                    } label: {
+                        Label("Copy Combined Markdown", systemImage: "doc.on.doc")
+                    }
+                    .disabled(entries.isEmpty)
                     Divider()
                     Button(role: .destructive) {
                         showDeleteConfirm = true
@@ -148,6 +154,11 @@ struct NotebookDetailView: View {
     private func copyMarkdown(for entry: TranscriptEntry) {
         let md = vm.markdownFor(entry)
         UIPasteboard.general.string = md
+    }
+
+    private func exportAll() {
+        let combined = vm.combinedMarkdown(for: notebook)
+        UIPasteboard.general.string = combined
     }
 }
 

@@ -1,7 +1,12 @@
 import Foundation
 
 enum MarkdownFormatter {
+    /// Backwards-compatible entry — used where notebook context isn't available.
     static func format(_ result: TranscriptResult) -> String {
+        format(result, notebook: nil, documentNote: nil)
+    }
+
+    static func format(_ result: TranscriptResult, notebook: Notebook?, documentNote: String?) -> String {
         let today = DateFormatter.obsidianDate.string(from: Date())
         let postedStr = result.postedDate.map { DateFormatter.isoDate.string(from: $0) }
         let title = result.editableTitle.isEmpty ? result.title : result.editableTitle
@@ -16,6 +21,9 @@ enum MarkdownFormatter {
         if !handle.isEmpty { lines += ["username: \"\(handle)\""] }
         lines += ["platform: \(result.platform)"]
         lines += ["url: \"\(result.url)\""]
+        if let nb = notebook {
+            lines += ["notebook: \"\(nb.name.replacingOccurrences(of: "\"", with: "'"))\""]
+        }
         lines += ["saved: [[\(today)]]"]
         if let posted = postedStr { lines += ["posted: \(posted)"] }
         if let dur = result.duration { lines += ["duration: \"\(dur)\""] }
@@ -39,6 +47,7 @@ enum MarkdownFormatter {
         }()
         var metaParts = ["**Author:** \(authorDisplay)"]
         metaParts += ["**Platform:** \(result.platform)"]
+        if let nb = notebook { metaParts += ["**Notebook:** \(nb.name)"] }
         if let posted = postedStr { metaParts += ["**Posted:** \(posted)"] }
         if let dur = result.duration { metaParts += ["**Duration:** \(dur)"] }
 
@@ -55,6 +64,11 @@ enum MarkdownFormatter {
             metaParts += ["**Creator:** [\(creatorLabel)](\(url))"]
         }
         lines += [metaParts.joined(separator: "  \n"), ""]
+
+        // Document Note — sits above caption so it's the first content the user reads
+        if let note = documentNote, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines += ["## Notes", "", note, ""]
+        }
 
         // Caption
         if !result.caption.isEmpty {
