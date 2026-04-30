@@ -164,6 +164,11 @@ final class TranscriptViewModel {
                     transcriptResult = try await YouTubeFetcher.fetch(videoId: videoId, originalURL: raw)
                     rLog(.ok, step: "YouTube", "Got transcript: \(transcriptResult.transcript.count) chars ⏱ \(elapsed(since: tYT))")
 
+                case .localFile:
+                    // .localFile is never produced by PlatformRouter.detect() — local files
+                    // go through `vm.transcribeLocalFile(_:displayName:)` directly. This case
+                    // exists only so the switch is exhaustive. Treat as unknown if it ever lands here.
+                    fallthrough
                 case .tiktok, .instagram, .twitter, .threads, .youtubeShorts, .unknown:
                     rLog(step: "Whisper", "Model ready: \(whisperTranscriber.isModelReady())")
                     guard whisperTranscriber.isModelReady() else {
@@ -221,7 +226,7 @@ final class TranscriptViewModel {
                     case .twitter: platformName = "Twitter"
                     case .threads: platformName = "Threads"
                     case .youtubeShorts: platformName = "YouTube Shorts"
-                    default: platformName = "Video"
+                    case .localFile, .youtube, .unknown: platformName = "Video"
                     }
 
                     transcriptResult = TranscriptResult(
