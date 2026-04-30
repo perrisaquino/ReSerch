@@ -985,6 +985,34 @@ enum VideoExtractor {
         return actualAudioFile
     }
 
+    /// Generates a single JPEG thumbnail from a video file at ~1s in.
+    /// Returns nil for audio files or when AVFoundation can't decode a frame.
+    static func extractThumbnail(from videoURL: URL) async -> URL? {
+        let asset = AVURLAsset(url: videoURL)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 600, height: 600)
+        let time = CMTime(seconds: 1.0, preferredTimescale: 600)
+
+        do {
+            let cgImage: CGImage = try await withCheckedThrowingContinuation { cont in
+                generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: time)]) { _, image, _, _, error in
+                    if let error { cont.resume(throwing: error); return }
+                    if let image { cont.resume(returning: image) }
+                    else { cont.resume(throwing: NSError(domain: "Thumbnail", code: -1)) }
+                }
+            }
+            let uiImage = UIImage(cgImage: cgImage)
+            guard let jpeg = uiImage.jpegData(compressionQuality: 0.8) else { return nil }
+            let outURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString + ".jpg")
+            try jpeg.write(to: outURL, options: .atomic)
+            return outURL
+        } catch {
+            return nil
+        }
+    }
+
     /// User-picked file path: handles both audio (passthrough copy to temp) and video
     /// (AVAssetExportSession to .m4a). Caller manages security-scoped resource access.
     static func extractAudioFromLocalFile(_ fileURL: URL) async throws -> URL {

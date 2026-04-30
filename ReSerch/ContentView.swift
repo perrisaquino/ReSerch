@@ -1,6 +1,4 @@
 import SwiftUI
-import PhotosUI
-import UniformTypeIdentifiers
 
 struct ContentView: View {
     var vm: TranscriptViewModel
@@ -11,10 +9,7 @@ struct ContentView: View {
     @State private var selectedIDs: Set<UUID> = []
     @State private var showMoveToNotebook = false
     @State private var singleMoveEntry: TranscriptEntry? = nil
-    @State private var showImportSourceChooser = false
-    @State private var showPhotosPicker = false
-    @State private var showFilesPicker = false
-    @State private var photoItem: PhotosPickerItem? = nil
+    @State private var importKind: ImportMediaSheet.Kind? = nil
     @State private var gate = ExportGate.shared
     @State private var showPaywall = false
     @State private var showOnboarding = !OnboardingView.hasCompleted
@@ -53,26 +48,8 @@ struct ContentView: View {
             .sheet(item: $singleMoveEntry) { entry in
                 MoveToNotebookSheet(vm: vm, selectedIDs: [entry.id])
             }
-            .confirmationDialog("Import from", isPresented: $showImportSourceChooser, titleVisibility: .visible) {
-                Button("Photos Library") { showPhotosPicker = true }
-                Button("Files App") { showFilesPicker = true }
-                Button("Cancel", role: .cancel) {}
-            }
-            .photosPicker(
-                isPresented: $showPhotosPicker,
-                selection: $photoItem,
-                matching: .videos,
-                preferredItemEncoding: .current
-            )
-            .fileImporter(
-                isPresented: $showFilesPicker,
-                allowedContentTypes: [.audio, .movie, .mp3, .mpeg4Movie, .quickTimeMovie, .mpeg4Audio, .wav]
-            ) { result in
-                handleFileImport(result)
-            }
-            .onChange(of: photoItem) { _, newItem in
-                guard let newItem else { return }
-                Task { await handlePhotosPick(newItem) }
+            .sheet(item: $importKind) { kind in
+                ImportMediaSheet(kind: kind, vm: vm)
             }
         }
         .preferredColorScheme(.dark)
@@ -252,9 +229,14 @@ struct ContentView: View {
                 Label("Paste URL", systemImage: "link")
             }
             Button {
-                showImportSourceChooser = true
+                importKind = .audio
             } label: {
-                Label("Import Audio or Video", systemImage: "waveform")
+                Label("Import Audio", systemImage: "waveform")
+            }
+            Button {
+                importKind = .video
+            } label: {
+                Label("Import Video", systemImage: "video")
             }
         } label: {
             Image(systemName: "plus")
@@ -267,57 +249,7 @@ struct ContentView: View {
         }
         .padding(24)
         .sensoryFeedback(.selection, trigger: showAdd)
-        .sensoryFeedback(.selection, trigger: showImportSourceChooser)
-    }
-
-    // MARK: - Local File Import
-
-    /// Handles a `.fileImporter` selection. The Files-app URL is security-scoped, so we
-    /// copy the file to our temp directory before handing it to the transcribe pipeline,
-    /// then release the scope immediately.
-    private func handleFileImport(_ result: Result<URL, Error>) {
-        switch result {
-        case .success(let url):
-            let didStartAccess = url.startAccessingSecurityScopedResource()
-            defer { if didStartAccess { url.stopAccessingSecurityScopedResource() } }
-
-            let tempDir = FileManager.default.temporaryDirectory
-            let copyURL = tempDir.appendingPathComponent(UUID().uuidString + "." + url.pathExtension)
-            do {
-                try FileManager.default.copyItem(at: url, to: copyURL)
-            } catch {
-                print("[Import] failed to copy from Files: \(error)")
-                return
-            }
-
-            let displayName = url.deletingPathExtension().lastPathComponent
-            Task { await vm.transcribeLocalFile(copyURL, displayName: displayName) }
-        case .failure(let error):
-            print("[Import] file picker failed: \(error)")
-        }
-    }
-
-    /// Handles a `PhotosPicker` selection. Loads the picked video as Data and writes it
-    /// to a temp file before handing it to the transcribe pipeline.
-    private func handlePhotosPick(_ item: PhotosPickerItem) async {
-        defer { photoItem = nil }
-        guard let data = try? await item.loadTransferable(type: Data.self), !data.isEmpty else {
-            print("[Import] PhotosPicker returned no data")
-            return
-        }
-        // PhotosPicker .videos returns a video; extension defaults to mov for Apple-captured video.
-        // Use the item's suggestedName + supported types when available, otherwise fall back to .mov.
-        let ext = "mov"
-        let displayName = item.itemIdentifier.flatMap { _ in "Photos Video" } ?? "Photos Video"
-        let tempDir = FileManager.default.temporaryDirectory
-        let copyURL = tempDir.appendingPathComponent(UUID().uuidString + "." + ext)
-        do {
-            try data.write(to: copyURL, options: .atomic)
-        } catch {
-            print("[Import] failed to write Photos video to temp: \(error)")
-            return
-        }
-        await vm.transcribeLocalFile(copyURL, displayName: displayName)
+        .sensoryFeedback(.selection, trigger: importKind)
     }
 
     // MARK: - Actions

@@ -268,7 +268,8 @@ final class TranscriptViewModel {
     /// Transcribes a user-picked local audio or video file. Bypasses URL parsing
     /// and runs the same audio → Whisper → TranscriptResult tail as the social URL flow.
     /// Caller is responsible for ending security-scoped resource access AFTER this returns.
-    func transcribeLocalFile(_ fileURL: URL, displayName: String) async {
+    /// `isVideo` controls whether we attempt thumbnail extraction.
+    func transcribeLocalFile(_ fileURL: URL, displayName: String, isVideo: Bool) async {
         currentTask?.cancel()
         result = nil
 
@@ -284,6 +285,9 @@ final class TranscriptViewModel {
                     return
                 }
 
+                // Extract thumbnail in parallel with audio extraction, when relevant.
+                async let thumbnailURL: URL? = isVideo ? VideoExtractor.extractThumbnail(from: fileURL) : nil
+
                 status = .downloadingVideo(0.1)
                 rLog(step: "LocalFile", "Extracting audio (audio passthrough or video → m4a)")
                 let audioURL = try await VideoExtractor.extractAudioFromLocalFile(fileURL)
@@ -298,6 +302,7 @@ final class TranscriptViewModel {
 
                 try? FileManager.default.removeItem(at: audioURL)
                 let formatted = transcript.paragraphized()
+                let thumb = await thumbnailURL
 
                 if Task.isCancelled { return }
 
@@ -311,7 +316,8 @@ final class TranscriptViewModel {
                     platform: "Local File",
                     url: "",
                     caption: "",
-                    transcript: formatted
+                    transcript: formatted,
+                    thumbnailURL: thumb
                 )
                 result = transcriptResult
                 status = .done
@@ -356,11 +362,31 @@ final class TranscriptViewModel {
         var saved = 0
         var failed = 0
 
-        for url in urls {
+        for (idx, url) in urls.enumerated() {
             batchCurrent += 1
             urlInput = url
+            rLog(step: "Batch", "[\(batchCurrent)/\(batchTotal)] Starting \(url)")
+
+            // Snapshot history size before fetching so we can detect a successful save
+            // independent of the .status race that previously over-counted failures.
+            let sizeBefore = history.count
             await fetchTranscript()
-            if case .done = status { saved += 1 } else { failed += 1 }
+            let didSave = history.count > sizeBefore
+
+            if didSave {
+                saved += 1
+                rLog(.ok, step: "Batch", "[\(batchCurrent)/\(batchTotal)] Saved")
+            } else {
+                failed += 1
+                rLog(.fail, step: "Batch", "[\(batchCurrent)/\(batchTotal)] Failed (status: \(status))")
+            }
+
+            // Brief pause between iterations: lets any platform-side rate limit /
+            // cookie / connection state settle before the next request. Negligible
+            // user impact (1s on a 30-60s transcribe each).
+            if idx < urls.count - 1 {
+                try? await Task.sleep(for: .seconds(1))
+            }
         }
 
         isBatchProcessing = false
@@ -369,6 +395,16 @@ final class TranscriptViewModel {
         UIApplication.shared.endBackgroundTask(bgTask)
 
         NotificationManager.sendBatchComplete(count: saved, failed: failed, playlistName: playlistName)
+    }
+
+    /// Public cancellation hook — used by sheets that need to abort an in-flight transcribe
+    /// when the user dismisses (e.g. ImportMediaSheet's Cancel button).
+    func cancelCurrentTask() {
+        currentTask?.cancel()
+        currentTask = nil
+        if !isBatchProcessing {
+            status = .idle
+        }
     }
 
     func saveToHistory(_ result: TranscriptResult) {
