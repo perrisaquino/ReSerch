@@ -3,7 +3,9 @@ import SwiftUI
 /// Detail view for a single notebook: shows all transcripts assigned to it.
 /// Reuses `TranscriptRow` from ContentView for visual consistency with the Feed.
 struct NotebookDetailView: View {
-    let notebook: Notebook
+    /// Stored as ID, not the Notebook value, so renames/recolors propagate via vm
+    /// without leaving this view holding a stale snapshot.
+    private let notebookID: UUID
     var vm: TranscriptViewModel
 
     @State private var selectedEntry: TranscriptEntry? = nil
@@ -12,21 +14,42 @@ struct NotebookDetailView: View {
     @State private var showDeleteConfirm = false
     @State private var renameText: String = ""
 
-    private var entries: [TranscriptEntry] {
-        vm.transcripts(in: notebook)
+    init(notebook: Notebook, vm: TranscriptViewModel) {
+        self.notebookID = notebook.id
+        self.vm = vm
+    }
+
+    /// Always reads the latest notebook state from the VM. Returns nil if the notebook
+    /// was just deleted; the body falls back to a blank background and the parent
+    /// NavigationStack pops on the next render.
+    private var liveNotebook: Notebook? {
+        vm.notebook(for: notebookID)
     }
 
     var body: some View {
+        Group {
+            if let nb = liveNotebook {
+                content(notebook: nb)
+            } else {
+                Color(red: 0.07, green: 0.09, blue: 0.13).ignoresSafeArea()
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    @ViewBuilder
+    private func content(notebook nb: Notebook) -> some View {
+        let entries = vm.transcripts(in: nb)
+
         ZStack {
             Color(red: 0.07, green: 0.09, blue: 0.13).ignoresSafeArea()
 
             if entries.isEmpty {
-                emptyState
+                emptyState(for: nb)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        // Color stripe + count header
-                        header
+                        header(for: nb, entryCount: entries.count)
                             .padding(.horizontal, 16)
                             .padding(.top, 8)
                             .padding(.bottom, 16)
@@ -48,13 +71,13 @@ struct NotebookDetailView: View {
                 }
             }
         }
-        .navigationTitle(notebook.name)
+        .navigationTitle(nb.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button {
-                        renameText = notebook.name
+                        renameText = nb.name
                         showRename = true
                     } label: {
                         Label("Rename", systemImage: "pencil")
@@ -65,7 +88,7 @@ struct NotebookDetailView: View {
                         Label("Change Color", systemImage: "paintpalette")
                     }
                     Button {
-                        exportAll()
+                        exportAll(notebook: nb)
                     } label: {
                         Label("Copy Combined Markdown", systemImage: "doc.on.doc")
                     }
@@ -89,38 +112,35 @@ struct NotebookDetailView: View {
             TextField("Name", text: $renameText)
             Button("Cancel", role: .cancel) {}
             Button("Save") {
-                vm.renameNotebook(notebook, to: renameText)
+                vm.renameNotebook(nb, to: renameText)
             }
         }
         .sheet(isPresented: $showColorPicker) {
-            NotebookColorPickerSheet(notebook: notebook, vm: vm)
+            NotebookColorPickerSheet(notebookID: notebookID, vm: vm)
                 .presentationDetents([.height(220)])
         }
         .confirmationDialog(
-            "Delete \"\(notebook.name)\"?",
+            "Delete \"\(nb.name)\"?",
             isPresented: $showDeleteConfirm,
             titleVisibility: .visible
         ) {
             Button("Delete Notebook", role: .destructive) {
-                vm.deleteNotebook(notebook)
+                vm.deleteNotebook(nb)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Transcripts in this notebook will move back to Unfiled. They won't be deleted.")
         }
-        .preferredColorScheme(.dark)
     }
 
-    // MARK: - Header
-
-    private var header: some View {
+    private func header(for nb: Notebook, entryCount: Int) -> some View {
         VStack(spacing: 10) {
             Rectangle()
-                .fill(notebook.color)
+                .fill(nb.color)
                 .frame(height: 2)
                 .clipShape(Capsule())
             HStack {
-                Text(entries.count == 1 ? "1 transcript" : "\(entries.count) transcripts")
+                Text(entryCount == 1 ? "1 transcript" : "\(entryCount) transcripts")
                     .font(.system(size: 13))
                     .foregroundStyle(.white.opacity(0.55))
                 Spacer()
@@ -128,14 +148,12 @@ struct NotebookDetailView: View {
         }
     }
 
-    // MARK: - Empty state
-
-    private var emptyState: some View {
+    private func emptyState(for nb: Notebook) -> some View {
         VStack(spacing: 18) {
             Image(systemName: "tray")
                 .font(.system(size: 44, weight: .light))
                 .foregroundStyle(.white.opacity(0.35))
-            Text("No transcripts in \(notebook.name) yet")
+            Text("No transcripts in \(nb.name) yet")
                 .font(.system(size: 15))
                 .foregroundStyle(.white.opacity(0.55))
                 .multilineTextAlignment(.center)
@@ -156,17 +174,22 @@ struct NotebookDetailView: View {
         UIPasteboard.general.string = md
     }
 
-    private func exportAll() {
-        let combined = vm.combinedMarkdown(for: notebook)
+    private func exportAll(notebook nb: Notebook) {
+        let combined = vm.combinedMarkdown(for: nb)
         UIPasteboard.general.string = combined
     }
 }
 
 /// Lightweight color picker sheet used from NotebookDetailView's "..." menu.
+/// Stores notebook by ID so the selected-ring updates live as the user taps swatches.
 private struct NotebookColorPickerSheet: View {
-    let notebook: Notebook
+    let notebookID: UUID
     var vm: TranscriptViewModel
     @Environment(\.dismiss) private var dismiss
+
+    private var liveNotebook: Notebook? {
+        vm.notebook(for: notebookID)
+    }
 
     var body: some View {
         VStack(spacing: 18) {
@@ -178,7 +201,9 @@ private struct NotebookColorPickerSheet: View {
             HStack(spacing: 14) {
                 ForEach(Notebook.presetColors, id: \.self) { hex in
                     Button {
-                        vm.recolorNotebook(notebook, to: hex)
+                        if let nb = liveNotebook {
+                            vm.recolorNotebook(nb, to: hex)
+                        }
                         dismiss()
                     } label: {
                         Circle()
@@ -187,7 +212,7 @@ private struct NotebookColorPickerSheet: View {
                             .overlay(
                                 Circle()
                                     .strokeBorder(
-                                        notebook.colorHex == hex ? Color.white : Color.clear,
+                                        liveNotebook?.colorHex == hex ? Color.white : Color.clear,
                                         lineWidth: 2
                                     )
                             )
