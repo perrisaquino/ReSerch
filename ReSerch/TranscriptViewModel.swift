@@ -9,6 +9,7 @@ final class TranscriptViewModel {
     var result: TranscriptResult? = nil
     var status: FetchStatus = .idle
     var history: [TranscriptEntry] = []
+    var notebooks: [Notebook] = []
     var copied: Bool = false
     var modelDownloadProgress: Double = 0
     var isDownloadingModel: Bool = false
@@ -38,9 +39,15 @@ final class TranscriptViewModel {
             .appendingPathComponent("reserch_history.json")
     }
 
+    private var notebooksFileURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("reserch_notebooks.json")
+    }
+
     init() {
         print("[ReSerch] TranscriptViewModel.init started")
         loadHistory()
+        loadNotebooks()
         Task { await whisperTranscriber.initializeIfCached() }
     }
 
@@ -358,6 +365,120 @@ final class TranscriptViewModel {
             // Delete corrupt file so next launch starts clean
             try? FileManager.default.removeItem(at: historyFileURL)
             history = []
+        }
+    }
+
+    // MARK: - Notebooks
+
+    /// Returns transcripts that belong to the given notebook, newest-first.
+    func transcripts(in notebook: Notebook) -> [TranscriptEntry] {
+        history.filter { $0.notebookID == notebook.id }
+    }
+
+    /// Returns transcripts not assigned to any notebook, newest-first.
+    var unfiledTranscripts: [TranscriptEntry] {
+        history.filter { $0.notebookID == nil }
+    }
+
+    /// Looks up a notebook by ID. Returns nil if the notebook was deleted.
+    func notebook(for id: UUID?) -> Notebook? {
+        guard let id else { return nil }
+        return notebooks.first { $0.id == id }
+    }
+
+    @discardableResult
+    func createNotebook(name: String, colorHex: String? = nil) -> Notebook {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nb = Notebook(name: trimmed, colorHex: colorHex)
+        notebooks.append(nb)
+        sortNotebooks()
+        saveNotebooksAsync()
+        return nb
+    }
+
+    func renameNotebook(_ notebook: Notebook, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let idx = notebooks.firstIndex(where: { $0.id == notebook.id }) else { return }
+        notebooks[idx].name = trimmed
+        sortNotebooks()
+        saveNotebooksAsync()
+    }
+
+    func recolorNotebook(_ notebook: Notebook, to colorHex: String?) {
+        guard let idx = notebooks.firstIndex(where: { $0.id == notebook.id }) else { return }
+        notebooks[idx].colorHex = colorHex
+        saveNotebooksAsync()
+    }
+
+    /// Deletes a notebook. Transcripts inside it move back to Unfiled (notebookID = nil).
+    func deleteNotebook(_ notebook: Notebook) {
+        notebooks.removeAll { $0.id == notebook.id }
+        for idx in history.indices where history[idx].notebookID == notebook.id {
+            history[idx].notebookID = nil
+        }
+        saveNotebooksAsync()
+        saveHistoryAsync()
+    }
+
+    /// Moves a transcript into a notebook (or to Unfiled when notebook is nil).
+    func assignNotebook(_ entry: TranscriptEntry, to notebook: Notebook?) {
+        guard let idx = history.firstIndex(where: { $0.id == entry.id }) else { return }
+        history[idx].notebookID = notebook?.id
+        saveHistoryAsync()
+    }
+
+    /// Bulk-move version. Used by the multi-select bulkBar.
+    func assignNotebook(_ entries: [TranscriptEntry], to notebook: Notebook?) {
+        for entry in entries {
+            if let idx = history.firstIndex(where: { $0.id == entry.id }) {
+                history[idx].notebookID = notebook?.id
+            }
+        }
+        saveHistoryAsync()
+    }
+
+    func setDocumentNote(_ entry: TranscriptEntry, to note: String) {
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let idx = history.firstIndex(where: { $0.id == entry.id }) else { return }
+        history[idx].documentNote = trimmed.isEmpty ? nil : note
+        saveHistoryAsync()
+    }
+
+    /// Alphabetical, case-insensitive. Stable ordering for the Notebooks tab list.
+    private func sortNotebooks() {
+        notebooks.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    // MARK: - Notebook persistence
+
+    func saveNotebooks() {
+        guard let data = try? JSONEncoder().encode(notebooks) else { return }
+        try? data.write(to: notebooksFileURL, options: .atomic)
+    }
+
+    private func saveNotebooksAsync() {
+        let snapshot = notebooks
+        let url = notebooksFileURL
+        Task.detached(priority: .utility) {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    private func loadNotebooks() {
+        guard let data = try? Data(contentsOf: notebooksFileURL) else {
+            print("[ReSerch] loadNotebooks — no file, starting fresh")
+            return
+        }
+        do {
+            notebooks = try JSONDecoder().decode([Notebook].self, from: data)
+            sortNotebooks()
+            print("[ReSerch] loadNotebooks — loaded \(notebooks.count) notebooks")
+        } catch {
+            print("[ReSerch] loadNotebooks — decode FAILED: \(error)")
+            try? FileManager.default.removeItem(at: notebooksFileURL)
+            notebooks = []
         }
     }
 }
