@@ -7,6 +7,9 @@ enum Platform {
     case instagram(url: URL)
     case twitter(url: URL)
     case threads(url: URL)
+    /// User-imported audio or video file. Set explicitly when picking from
+    /// Photos / Files — never produced by `PlatformRouter.detect(_:)`.
+    case localFile(url: URL, displayName: String)
     case unknown(url: URL)
 }
 

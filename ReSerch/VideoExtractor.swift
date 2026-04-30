@@ -985,6 +985,27 @@ enum VideoExtractor {
         return actualAudioFile
     }
 
+    /// User-picked file path: handles both audio (passthrough copy to temp) and video
+    /// (AVAssetExportSession to .m4a). Caller manages security-scoped resource access.
+    static func extractAudioFromLocalFile(_ fileURL: URL) async throws -> URL {
+        let ext = fileURL.pathExtension.lowercased()
+        let audioExtensions: Set<String> = ["m4a", "mp3", "wav", "aac", "caf", "mp4a"]
+        let tempDir = FileManager.default.temporaryDirectory
+        let outputURL = tempDir.appendingPathComponent(UUID().uuidString + ".m4a")
+
+        if audioExtensions.contains(ext) {
+            // Audio file — copy to temp so the security-scoped original can be released
+            // after this returns. Whisper reads from the copy.
+            try FileManager.default.copyItem(at: fileURL, to: outputURL)
+            rLog(.ok, step: "LocalFile", "Audio passthrough copied to \(outputURL.lastPathComponent)")
+            return outputURL
+        }
+
+        // Video file — extract audio via AVAssetExportSession
+        rLog(step: "LocalFile", "Extracting audio from video \(fileURL.lastPathComponent)")
+        return try await extractAudio(from: fileURL, to: outputURL)
+    }
+
     /// Single auto-retry on transient network errors (cell handoff, packet loss, brief drops).
     /// Catches connection-lost / timeout / not-connected and tries one more time after 1s.
     /// Other errors propagate immediately so real failures don't get masked by retries.
@@ -1090,7 +1111,9 @@ enum VideoExtractor {
 
     // Returns the URL of the file actually written — may differ from audioURL if fallback path was used.
     @discardableResult
-    private static func extractAudio(from videoURL: URL, to audioURL: URL, httpHeaders: [String: String] = [:]) async throws -> URL {
+    /// Extracts a `.m4a` audio track from a video URL via AVAssetExportSession.
+    /// Internal so the local-file import path can reuse it.
+    static func extractAudio(from videoURL: URL, to audioURL: URL, httpHeaders: [String: String] = [:]) async throws -> URL {
         let assetOptions: [String: Any] = httpHeaders.isEmpty ? [:] : ["AVURLAssetHTTPHeaderFieldsKey": httpHeaders]
         let asset = AVURLAsset(url: videoURL, options: assetOptions.isEmpty ? nil : assetOptions)
         let tracks = try await asset.loadTracks(withMediaType: .audio)

@@ -260,6 +260,69 @@ final class TranscriptViewModel {
         await currentTask?.value
     }
 
+    /// Transcribes a user-picked local audio or video file. Bypasses URL parsing
+    /// and runs the same audio → Whisper → TranscriptResult tail as the social URL flow.
+    /// Caller is responsible for ending security-scoped resource access AFTER this returns.
+    func transcribeLocalFile(_ fileURL: URL, displayName: String) async {
+        currentTask?.cancel()
+        result = nil
+
+        currentTask = Task {
+            do {
+                DebugLogger.shared.clear()
+                let t0 = Date()
+                rLog(step: "LocalFile", "Importing: \(fileURL.lastPathComponent) (\(displayName))")
+
+                // Whisper model must be ready — same gate as the social audio path
+                guard whisperTranscriber.isModelReady() else {
+                    status = .needsModel
+                    return
+                }
+
+                status = .downloadingVideo(0.1)
+                rLog(step: "LocalFile", "Extracting audio (audio passthrough or video → m4a)")
+                let audioURL = try await VideoExtractor.extractAudioFromLocalFile(fileURL)
+                rLog(.ok, step: "LocalFile", "Audio ready: \(audioURL.lastPathComponent)")
+
+                status = .transcribing(0)
+                rLog(step: "Whisper", "Starting transcription")
+                let transcript = try await whisperTranscriber.transcribe(audioURL: audioURL) { p in
+                    Task { @MainActor [weak self] in self?.status = .transcribing(p) }
+                }
+                rLog(.ok, step: "Whisper", "Done — \(transcript.count) chars")
+
+                try? FileManager.default.removeItem(at: audioURL)
+                let formatted = transcript.paragraphized()
+
+                if Task.isCancelled { return }
+
+                let elapsed = String(format: "%.2fs", Date().timeIntervalSince(t0))
+                rLog(.ok, step: "Total", "Local-file transcribe done in \(elapsed)")
+
+                let transcriptResult = TranscriptResult(
+                    title: displayName,
+                    author: "",
+                    handle: "",
+                    platform: "Local File",
+                    url: "",
+                    caption: "",
+                    transcript: formatted
+                )
+                result = transcriptResult
+                status = .done
+                saveToHistory(transcriptResult)
+
+            } catch is CancellationError {
+                rLog(.warn, step: "Task", "Local-file transcribe cancelled")
+                status = .idle
+            } catch {
+                rLog(.fail, step: "Error", "Local-file transcribe failed: \(error)")
+                status = .error(error.localizedDescription)
+            }
+        }
+        await currentTask?.value
+    }
+
     func fetchBatch(rawText: String) async {
         // Parse one URL per line, skip blanks
         let urls = rawText

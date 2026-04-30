@@ -58,7 +58,12 @@ enum MarkdownFormatter {
         if let s = result.shareCount { statParts += ["\(formatCount(s)) shares"] }
         if !statParts.isEmpty { metaParts += ["**Stats:** " + statParts.joined(separator: " · ")] }
 
-        metaParts += ["**Source:** [View Original](\(result.url))"]
+        if result.url.isEmpty {
+            // Local-file imports have no source URL to link to.
+            metaParts += ["**Source:** Imported file"]
+        } else {
+            metaParts += ["**Source:** [View Original](\(result.url))"]
+        }
         if let url = creatorURL {
             let creatorLabel = handle.isEmpty ? result.author : handle
             metaParts += ["**Creator:** [\(creatorLabel)](\(url))"]
