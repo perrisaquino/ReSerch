@@ -8,6 +8,27 @@ enum NotificationManager {
         #endif
     }
 
+    /// Brief per-item progress ping during a batch — silent (no sound) to avoid
+    /// spamming the user. Useful when the user moves to another app and wants to
+    /// know the batch is still alive.
+    static func sendBatchProgress(current: Int, total: Int, lastTitle: String?) {
+        let content = UNMutableNotificationContent()
+        content.title = "ReSerch"
+        if let title = lastTitle, !title.isEmpty {
+            let trimmed = title.count > 50 ? String(title.prefix(50)) + "…" : title
+            content.body = "\(current) of \(total): \(trimmed)"
+        } else {
+            content.body = "\(current) of \(total) transcripts done"
+        }
+        // Silent — don't spam sounds. Final completion uses sendBatchComplete with sound.
+        let request = UNNotificationRequest(
+            identifier: "reserch.batch.progress",   // re-use identifier so each new ping replaces the previous
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
+    }
+
     static func sendBatchComplete(count: Int, failed: Int, playlistName: String? = nil) {
         let content = UNMutableNotificationContent()
         if let name = playlistName, !name.isEmpty {

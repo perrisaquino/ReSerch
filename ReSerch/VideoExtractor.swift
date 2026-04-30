@@ -103,14 +103,36 @@ enum VideoExtractor {
         let config = URLSessionConfiguration.default
         config.httpAdditionalHeaders = headers
         let session = URLSession(configuration: config)
-        let (data, response) = try await session.data(from: url)
-        let finalURL = response.url ?? url
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        rLog(status == 200 ? .ok : .fail, step: "Extract", "HTTP \(status), \(data.count) bytes, final: \(finalURL.absoluteString)")
-        guard let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
-            throw ExtractError.noVideoFound
+
+        let transientCodes: Set<URLError.Code> = [
+            .networkConnectionLost, .timedOut, .notConnectedToInternet,
+            .cannotConnectToHost, .cannotFindHost, .dataNotAllowed, .secureConnectionFailed,
+        ]
+        let maxAttempts = 4
+        var lastError: Error = URLError(.unknown)
+        for attempt in 1...maxAttempts {
+            do {
+                let (data, response) = try await session.data(from: url)
+                let finalURL = response.url ?? url
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                rLog(status == 200 ? .ok : .fail, step: "Extract", "HTTP \(status), \(data.count) bytes, final: \(finalURL.absoluteString)")
+                guard let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+                    throw ExtractError.noVideoFound
+                }
+                return (html, finalURL)
+            } catch let error as URLError where transientCodes.contains(error.code) {
+                lastError = error
+                if attempt == maxAttempts {
+                    rLog(.fail, step: "Extract", "Page fetch attempt \(attempt)/\(maxAttempts) failed (\(error.code.rawValue)) — giving up")
+                    throw error
+                }
+                let delaySeconds = Int(pow(2.0, Double(attempt - 1)))   // 1, 2, 4
+                rLog(.warn, step: "Extract", "Page fetch attempt \(attempt)/\(maxAttempts) failed (\(error.code.rawValue)), retrying in \(delaySeconds)s...")
+                try? await Task.sleep(for: .seconds(delaySeconds))
+                continue
+            }
         }
-        return (html, finalURL)
+        throw lastError
     }
 
     // MARK: - TikTok
@@ -1034,18 +1056,33 @@ enum VideoExtractor {
         return try await extractAudio(from: fileURL, to: outputURL)
     }
 
-    /// Single auto-retry on transient network errors (cell handoff, packet loss, brief drops).
-    /// Catches connection-lost / timeout / not-connected and tries one more time after 1s.
-    /// Other errors propagate immediately so real failures don't get masked by retries.
-    private static func downloadWithRetry(request: URLRequest, maxAttempts: Int = 2) async throws -> (URL, URLResponse) {
+    /// Up to 4 attempts with exponential backoff on transient network errors.
+    /// Backoff: 1s, 2s, 4s. Catches connection-lost / timeout / not-connected /
+    /// data-not-allowed / cannot-connect-to-host. Other errors propagate immediately
+    /// so real failures don't get masked by retries.
+    private static func downloadWithRetry(request: URLRequest, maxAttempts: Int = 4) async throws -> (URL, URLResponse) {
         var lastError: Error = URLError(.unknown)
+        let transientCodes: Set<URLError.Code> = [
+            .networkConnectionLost,
+            .timedOut,
+            .notConnectedToInternet,
+            .cannotConnectToHost,
+            .cannotFindHost,
+            .dataNotAllowed,
+            .secureConnectionFailed,
+        ]
         for attempt in 1...maxAttempts {
             do {
                 return try await URLSession.shared.download(for: request)
-            } catch let error as URLError where [.networkConnectionLost, .timedOut, .notConnectedToInternet].contains(error.code) {
-                rLog(step: "Download", "Attempt \(attempt) failed (\(error.code.rawValue)), retrying...")
+            } catch let error as URLError where transientCodes.contains(error.code) {
                 lastError = error
-                try? await Task.sleep(for: .seconds(1))
+                if attempt == maxAttempts {
+                    rLog(.fail, step: "Download", "Attempt \(attempt)/\(maxAttempts) failed (\(error.code.rawValue)) — giving up")
+                    break
+                }
+                let delaySeconds = Int(pow(2.0, Double(attempt - 1)))   // 1, 2, 4
+                rLog(.warn, step: "Download", "Attempt \(attempt)/\(maxAttempts) failed (\(error.code.rawValue)), retrying in \(delaySeconds)s...")
+                try? await Task.sleep(for: .seconds(delaySeconds))
                 continue
             }
         }

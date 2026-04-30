@@ -392,6 +392,8 @@ final class TranscriptViewModel {
             if didSave {
                 saved += 1
                 rLog(.ok, step: "Batch", "[\(batchCurrent)/\(batchTotal)] Saved")
+                let lastTitle = history.first?.title
+                NotificationManager.sendBatchProgress(current: saved, total: batchTotal, lastTitle: lastTitle)
             } else {
                 failed += 1
                 rLog(.fail, step: "Batch", "[\(batchCurrent)/\(batchTotal)] Failed (status: \(status))")
