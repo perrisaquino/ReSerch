@@ -51,6 +51,7 @@ final class TranscriptViewModel {
         case fetchingCaptions
         case downloadingVideo(Double)
         case transcribing(Double)
+        case extractingCarousel(message: String)
         case done
         case error(String)
     }
@@ -185,7 +186,25 @@ final class TranscriptViewModel {
 
                     rLog(step: "Extract", "Fetching page + extracting video URL...")
                     let tExtract = Date()
-                    let meta = try await VideoExtractor.extractVideoMetadata(from: url, platform: platform)
+                    let meta: VideoMetadata
+                    do {
+                        meta = try await VideoExtractor.extractVideoMetadata(from: url, platform: platform)
+                    } catch VideoExtractor.ExtractError.carouselDetected(let payload, let hasVideo) {
+                        if hasVideo {
+                            rLog(.warn, step: "Carousel", "Mixed carousel detected — videos in this post weren't transcribed.")
+                        }
+                        rLog(step: "Carousel", "Routing to CarouselCoordinator for \(payload.slideCount) slides")
+                        status = .extractingCarousel(message: "Extracting slide 1 of \(payload.slideCount)…")
+                        let coord = CarouselCoordinator()
+                        let embed = UserDefaults.standard.object(forKey: "embedCarouselImages") as? Bool ?? true
+                        let carouselResult = await coord.makeTranscriptResult(from: payload, embedImages: embed) { [weak self] msg in
+                            Task { @MainActor in self?.status = .extractingCarousel(message: msg) }
+                        }
+                        result = carouselResult
+                        saveToHistory(carouselResult)
+                        status = .done
+                        return
+                    }
                     rLog(.ok, step: "Extract", "Got video URL ⏱ \(elapsed(since: tExtract))")
                     rLog(step: "Extract", "URL: \(meta.videoURL.absoluteString.prefix(80))...")
 

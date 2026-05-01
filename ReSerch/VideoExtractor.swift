@@ -8,6 +8,7 @@ enum VideoExtractor {
         case noVideoFound
         case downloadFailed(String)
         case audioExportFailed
+        case carouselDetected(CarouselPayload, hasVideo: Bool)
 
         var errorDescription: String? {
             switch self {
@@ -17,6 +18,8 @@ enum VideoExtractor {
                 return "Download failed: \(msg)"
             case .audioExportFailed:
                 return "Could not extract audio from video."
+            case .carouselDetected:
+                return nil
             }
         }
     }
@@ -351,9 +354,9 @@ enum VideoExtractor {
             return await e.extract(from: pageURL, mediaID: apiMediaID)
         }.value
         if let webResult {
-            if webResult.carousel != nil {
-                rLog(step: "Instagram", "Detected carousel — VideoExtractor cannot handle. Caller should route to CarouselCoordinator.")
-                throw ExtractError.noVideoFound
+            if let payload = webResult.carousel {
+                rLog(step: "Instagram", "Detected carousel — throwing carouselDetected for caller to route.")
+                throw ExtractError.carouselDetected(payload, hasVideo: webResult.mixedCarouselHasVideo)
             }
             guard let videoURL = webResult.videoURL else {
                 rLog(step: "Instagram", "WKWebView returned no video URL and no carousel.")
