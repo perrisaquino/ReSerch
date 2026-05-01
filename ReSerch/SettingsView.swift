@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var showFeedback = false
     @State private var versionTapCount = 0
     @State private var debugUnlocked = false
+    @AppStorage("embedCarouselImages") private var embedCarouselImages: Bool = true
     @Environment(\.dismiss) private var dismiss
 
     private static let debugUnlockTaps = 7
@@ -44,6 +45,10 @@ struct SettingsView: View {
                     Text("Video")
                 } footer: {
                     Text("When transcribing TikTok or Instagram, saves the video to your Photos library.")
+                }
+
+                Section("Carousels") {
+                    Toggle("Embed images in carousel notes", isOn: $embedCarouselImages)
                 }
 
                 feedbackSection
