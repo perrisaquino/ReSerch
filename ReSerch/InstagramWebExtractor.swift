@@ -3,9 +3,20 @@ import WebKit
 import UIKit
 
 struct InstagramWebResult {
-    let videoURL: URL
+    let videoURL: URL?              // nil when this is a carousel result
     let apiJSON: [String: Any]?
     let domMeta: [String: Any]?
+    let carousel: CarouselPayload?   // populated when post is a carousel
+    let mixedCarouselHasVideo: Bool  // true when sidecar has at least one video child
+
+    init(videoURL: URL?, apiJSON: [String: Any]? = nil, domMeta: [String: Any]? = nil,
+         carousel: CarouselPayload? = nil, mixedCarouselHasVideo: Bool = false) {
+        self.videoURL = videoURL
+        self.apiJSON = apiJSON
+        self.domMeta = domMeta
+        self.carousel = carousel
+        self.mixedCarouselHasVideo = mixedCarouselHasVideo
+    }
 }
 
 /// Loads an Instagram (or Threads) URL in a hidden WKWebView that shares Safari's cookie store.
@@ -25,6 +36,7 @@ final class InstagramWebExtractor: NSObject {
     private var domMeta: [String: Any]?
     private var interceptedVideoURL: URL?
     private var apiWaitTask: Task<Void, Never>?
+    private var startURL: URL?
 
     // Weak wrapper breaks the retain cycle:
     // WKUserContentController holds a strong reference to its message handlers,
@@ -43,6 +55,7 @@ final class InstagramWebExtractor: NSObject {
 
     func extract(from url: URL, mediaID: Int64? = nil) async -> InstagramWebResult? {
         self.mediaID = mediaID
+        self.startURL = url
         return await withCheckedContinuation { cont in
             self.continuation = cont
 
@@ -94,6 +107,25 @@ final class InstagramWebExtractor: NSObject {
                 if let data = body["data"] as? [String: Any] {
                     apiJSON = data
                     rLog(.ok, step: "Instagram/JS", "API JSON received (\(data.count) top-level keys)")
+                    // Carousel detection: if the post is a sidecar (with or without video children),
+                    // resolve immediately with a CarouselPayload. The video pollers/timers are torn
+                    // down by the existing resolve() cleanup path.
+                    let kind = InstagramCarouselExtractor.detectKind(from: data)
+                    if kind == .carousel || kind == .mixedCarousel {
+                        let postURL = webView?.url ?? startURL
+                        if let postURL,
+                           let payload = try? InstagramCarouselExtractor.parse(json: data, postURL: postURL) {
+                            let result = InstagramWebResult(
+                                videoURL: nil,
+                                apiJSON: data,
+                                domMeta: self.domMeta,
+                                carousel: payload,
+                                mixedCarouselHasVideo: kind == .mixedCarousel
+                            )
+                            self.resolve(result)
+                            return
+                        }
+                    }
                     // If we already have a good video URL, we can resolve now.
                     if let u = interceptedVideoURL, !u.absoluteString.contains("bytestart=") {
                         resolveAfterDOMMeta(videoURL: u)

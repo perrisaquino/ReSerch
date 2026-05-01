@@ -351,7 +351,14 @@ enum VideoExtractor {
             return await e.extract(from: pageURL, mediaID: apiMediaID)
         }.value
         if let webResult {
-            let videoURL = webResult.videoURL
+            if webResult.carousel != nil {
+                rLog(step: "Instagram", "Detected carousel — VideoExtractor cannot handle. Caller should route to CarouselCoordinator.")
+                throw ExtractError.noVideoFound
+            }
+            guard let videoURL = webResult.videoURL else {
+                rLog(step: "Instagram", "WKWebView returned no video URL and no carousel.")
+                throw ExtractError.noVideoFound
+            }
             rLog(.ok, step: "Instagram", "WKWebView: \(videoURL.absoluteString.prefix(60))...")
             // Parse rich metadata from the API JSON the WKWebView captured.
             if let apiJSON = webResult.apiJSON,
