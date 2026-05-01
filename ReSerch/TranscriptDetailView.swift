@@ -70,6 +70,12 @@ struct TranscriptDetailView: View {
                     )
                     entry.result.annotations.append(ann)
                     vm.updateEntry(entry)
+                    // Magic moment: first time the user makes a transcript "theirs" by
+                    // highlighting + commenting. Strong review trigger — they're emotionally
+                    // invested at this exact moment.
+                    if entry.result.annotations.count == 1 {
+                        ReviewPromptManager.shared.recordMilestone(.firstAnnotation)
+                    }
                 }
             }
             .sheet(isPresented: $showEditorComment) {
@@ -481,6 +487,9 @@ struct TranscriptDetailView: View {
                 onHighlight: { text, offset in
                     entry.result.annotations.append(Annotation(text: text, offset: offset))
                     vm.updateEntry(entry)
+                    if entry.result.annotations.count == 1 {
+                        ReviewPromptManager.shared.recordMilestone(.firstAnnotation)
+                    }
                 },
                 onAddNote: { text, offset in
                     pendingHighlightText   = text

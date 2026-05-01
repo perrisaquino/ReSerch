@@ -313,6 +313,12 @@ struct NotebookDetailView: View {
     private func exportAll(notebook nb: Notebook) {
         let combined = vm.combinedMarkdown(for: nb)
         UIPasteboard.general.string = combined
+        // Magic moment: user just exported a notebook of compiled research. Highest-quality
+        // moment for a review ask in the entire app. We also offer the testimonial card
+        // afterwards because power users who organize notebooks tend to write the best ones.
+        if vm.transcripts(in: nb).count >= 5 {
+            ReviewPromptManager.shared.recordMilestone(.firstNotebookCopyAll, offerTestimonial: true)
+        }
     }
 }
 

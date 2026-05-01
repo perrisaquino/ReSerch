@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var showMoveToNotebook = false
     @State private var singleMoveEntry: TranscriptEntry? = nil
     @State private var importKind: ImportMediaSheet.Kind? = nil
+    @State private var showTestimonialOffer = false
     @State private var gate = ExportGate.shared
     @State private var showPaywall = false
     @State private var showOnboarding = !OnboardingView.hasCompleted
@@ -50,6 +51,17 @@ struct ContentView: View {
             }
             .sheet(item: $importKind) { kind in
                 ImportMediaSheet(kind: kind, vm: vm)
+            }
+            .sheet(isPresented: $showTestimonialOffer) {
+                TestimonialOfferSheet()
+                    .presentationDetents([.height(280)])
+                    .presentationDragIndicator(.visible)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .offerTestimonial)) { _ in
+                // Posted by ReviewPromptManager ~6s after a high-tier review prompt fires.
+                // Soft secondary ask — opt-in path into the existing Submit Feedback form
+                // pre-set to .testimonial.
+                showTestimonialOffer = true
             }
         }
         .preferredColorScheme(.dark)

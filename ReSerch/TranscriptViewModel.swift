@@ -456,6 +456,19 @@ final class TranscriptViewModel {
         history.insert(entry, at: 0)
         if history.count > 100 { history = Array(history.prefix(100)) }
         saveHistoryAsync()
+
+        // Magic moment milestones — Apple throttles to 3 prompts/year, so these are safe
+        // to fire whenever they qualify. Order matters: earlier (more impressive) milestone
+        // wins because promptedThisSession blocks the rest until next launch.
+        if result.platform == "Local File" {
+            ReviewPromptManager.shared.recordMilestone(.firstLocalFile)
+        }
+        if history.count == 5 {
+            ReviewPromptManager.shared.recordMilestone(.fifthTranscript)
+        }
+        if history.count >= 10 && history.contains(where: { $0.notebookID != nil }) {
+            ReviewPromptManager.shared.recordMilestone(.tenthOrganizedTranscript)
+        }
     }
 
     func deleteEntry(_ entry: TranscriptEntry) {
