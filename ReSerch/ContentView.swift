@@ -243,6 +243,9 @@ struct TranscriptRow: View {
     }
 
     private var platformIcon: String {
+        if platform.contains("Carousel") || platform.contains("Photos") {
+            return "square.stack"
+        }
         switch platform.lowercased() {
         case "youtube": return "play.rectangle.fill"
         case "tiktok": return "music.note.tv.fill"

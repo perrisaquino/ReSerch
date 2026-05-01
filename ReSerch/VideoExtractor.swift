@@ -176,6 +176,18 @@ enum VideoExtractor {
             throw ExtractError.noVideoFound
         }
 
+        // Photo carousel detection — must run before the video check, since photo posts
+        // often have a stub `video` field that looks plausible but contains no playAddr.
+        if TikTokPhotoExtractor.isPhotoPost(itemStruct: itemStruct) {
+            guard let postURL = URL(string: originalURL),
+                  let payload = try? TikTokPhotoExtractor.parse(itemStruct: itemStruct, postURL: postURL) else {
+                rLog(.fail, step: "Extract", "TikTok photo post detected but parse failed")
+                throw ExtractError.noVideoFound
+            }
+            rLog(.ok, step: "Extract", "TikTok photo post: \(payload.slideCount) slides")
+            throw ExtractError.carouselDetected(payload, hasVideo: false)
+        }
+
         guard let video = itemStruct["video"] as? [String: Any] else {
             rLog(.fail, step: "Extract", "No 'video' key in itemStruct. Keys: \(itemStruct.keys.joined(separator: ", "))")
             throw ExtractError.noVideoFound
