@@ -1,0 +1,30 @@
+{
+  "__typename": "GraphSidecar",
+  "shortcode": "ABC123",
+  "owner": {
+    "username": "alice",
+    "full_name": "Alice Example",
+    "id": "1"
+  },
+  "edge_media_to_caption": {
+    "edges": [
+      {"node": {"text": "test caption"}}
+    ]
+  },
+  "edge_media_preview_like": {"count": 42},
+  "taken_at_timestamp": 1714521600,
+  "edge_sidecar_to_children": {
+    "edges": [
+      {"node": {
+        "__typename": "GraphImage",
+        "is_video": false,
+        "display_url": "https://cdn.example.com/0.jpg"
+      }},
+      {"node": {
+        "__typename": "GraphImage",
+        "is_video": false,
+        "display_url": "https://cdn.example.com/1.jpg"
+      }}
+    ]
+  }
+}

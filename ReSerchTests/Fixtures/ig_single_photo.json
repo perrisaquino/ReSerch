@@ -1,0 +1,6 @@
+{
+  "__typename": "GraphImage",
+  "shortcode": "SOLO",
+  "owner": {"username": "carol", "full_name": "Carol", "id": "3"},
+  "display_url": "https://cdn.example.com/solo.jpg"
+}

@@ -1,0 +1,14 @@
+{
+  "__typename": "GraphSidecar",
+  "shortcode": "MIX123",
+  "owner": {"username": "bob", "full_name": "Bob", "id": "2"},
+  "edge_media_to_caption": {"edges": []},
+  "edge_media_preview_like": {"count": 0},
+  "taken_at_timestamp": 1714521600,
+  "edge_sidecar_to_children": {
+    "edges": [
+      {"node": {"__typename": "GraphImage", "is_video": false, "display_url": "https://cdn.example.com/p.jpg"}},
+      {"node": {"__typename": "GraphVideo", "is_video": true, "display_url": "https://cdn.example.com/v.jpg"}}
+    ]
+  }
+}
