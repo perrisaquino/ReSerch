@@ -1,0 +1,10 @@
+{
+  "id": "7234567891",
+  "desc": "video",
+  "createTime": 1714521600,
+  "author": {"uniqueId": "bob_tt", "nickname": "Bob TT"},
+  "stats": {"diggCount": 5},
+  "video": {
+    "playAddr": "https://cdn.tiktok.example/v.mp4"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "7234567890",
+  "desc": "tiktok photo caption",
+  "createTime": 1714521600,
+  "author": {
+    "uniqueId": "alice_tt",
+    "nickname": "Alice TT"
+  },
+  "stats": {
+    "diggCount": 100
+  },
+  "imagePost": {
+    "images": [
+      {"imageURL": {"urlList": ["https://cdn.tiktok.example/0.jpg", "https://mirror.tiktok.example/0.jpg"]}},
+      {"imageURL": {"urlList": ["https://cdn.tiktok.example/1.jpg"]}},
+      {"imageURL": {"urlList": ["https://cdn.tiktok.example/2.jpg"]}}
+    ]
+  }
+}
