@@ -125,10 +125,14 @@ struct SettingsView: View {
                 Label("Submit Feedback", systemImage: "envelope")
                     .foregroundStyle(Color.accentColor)
             }
+            Link(destination: ReviewPromptManager.writeReviewURL) {
+                Label("Rate ReSerch on the App Store", systemImage: "star")
+                    .foregroundStyle(Color.accentColor)
+            }
         } header: {
             Text("Feedback")
         } footer: {
-            Text("Report a bug, request a feature, or send a testimonial. Attach a screenshot if it helps.")
+            Text("Report a bug, request a feature, or send a testimonial. Or leave a quick App Store review — it really helps.")
         }
     }
 
@@ -215,7 +219,7 @@ struct SettingsView: View {
 
 // MARK: - Feedback Form
 
-private enum FeedbackKind: String, CaseIterable, Identifiable {
+enum FeedbackKind: String, CaseIterable, Identifiable {
     case bug = "Bug"
     case feature = "Feature Request"
     case testimonial = "Testimonial"
@@ -258,7 +262,11 @@ private enum SubmitState: Equatable {
     case failed(String)
 }
 
-private struct FeedbackFormView: View {
+struct FeedbackFormView: View {
+    /// Lets external callers (review-prompt testimonial flow) pre-select a category.
+    /// Default `.bug` preserves the existing entry-from-Settings behavior.
+    var initialKind: FeedbackKind = .bug
+
     @Environment(\.dismiss) private var dismiss
 
     @State private var kind: FeedbackKind = .bug
@@ -362,6 +370,13 @@ private struct FeedbackFormView: View {
                 }
             }
             .preferredColorScheme(.dark)
+            .onAppear {
+                // Apply the externally-supplied initial kind once on first render.
+                // Don't overwrite if the user has already changed it in this session.
+                if kind == .bug && initialKind != .bug {
+                    kind = initialKind
+                }
+            }
             .sheet(isPresented: $showImagePicker) {
                 FeedbackImagePicker(image: $attachment)
                     .ignoresSafeArea()

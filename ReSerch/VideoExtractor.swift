@@ -106,14 +106,36 @@ enum VideoExtractor {
         let config = URLSessionConfiguration.default
         config.httpAdditionalHeaders = headers
         let session = URLSession(configuration: config)
-        let (data, response) = try await session.data(from: url)
-        let finalURL = response.url ?? url
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        rLog(status == 200 ? .ok : .fail, step: "Extract", "HTTP \(status), \(data.count) bytes, final: \(finalURL.absoluteString)")
-        guard let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
-            throw ExtractError.noVideoFound
+
+        let transientCodes: Set<URLError.Code> = [
+            .networkConnectionLost, .timedOut, .notConnectedToInternet,
+            .cannotConnectToHost, .cannotFindHost, .dataNotAllowed, .secureConnectionFailed,
+        ]
+        let maxAttempts = 4
+        var lastError: Error = URLError(.unknown)
+        for attempt in 1...maxAttempts {
+            do {
+                let (data, response) = try await session.data(from: url)
+                let finalURL = response.url ?? url
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                rLog(status == 200 ? .ok : .fail, step: "Extract", "HTTP \(status), \(data.count) bytes, final: \(finalURL.absoluteString)")
+                guard let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+                    throw ExtractError.noVideoFound
+                }
+                return (html, finalURL)
+            } catch let error as URLError where transientCodes.contains(error.code) {
+                lastError = error
+                if attempt == maxAttempts {
+                    rLog(.fail, step: "Extract", "Page fetch attempt \(attempt)/\(maxAttempts) failed (\(error.code.rawValue)) — giving up")
+                    throw error
+                }
+                let delaySeconds = Int(pow(2.0, Double(attempt - 1)))   // 1, 2, 4
+                rLog(.warn, step: "Extract", "Page fetch attempt \(attempt)/\(maxAttempts) failed (\(error.code.rawValue)), retrying in \(delaySeconds)s...")
+                try? await Task.sleep(for: .seconds(delaySeconds))
+                continue
+            }
         }
-        return (html, finalURL)
+        throw lastError
     }
 
     // MARK: - TikTok
@@ -1007,18 +1029,82 @@ enum VideoExtractor {
         return actualAudioFile
     }
 
-    /// Single auto-retry on transient network errors (cell handoff, packet loss, brief drops).
-    /// Catches connection-lost / timeout / not-connected and tries one more time after 1s.
-    /// Other errors propagate immediately so real failures don't get masked by retries.
-    private static func downloadWithRetry(request: URLRequest, maxAttempts: Int = 2) async throws -> (URL, URLResponse) {
+    /// Generates a single JPEG thumbnail from a video file at ~1s in.
+    /// Returns nil for audio files or when AVFoundation can't decode a frame.
+    static func extractThumbnail(from videoURL: URL) async -> URL? {
+        let asset = AVURLAsset(url: videoURL)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 600, height: 600)
+        let time = CMTime(seconds: 1.0, preferredTimescale: 600)
+
+        do {
+            let cgImage: CGImage = try await withCheckedThrowingContinuation { cont in
+                generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: time)]) { _, image, _, _, error in
+                    if let error { cont.resume(throwing: error); return }
+                    if let image { cont.resume(returning: image) }
+                    else { cont.resume(throwing: NSError(domain: "Thumbnail", code: -1)) }
+                }
+            }
+            let uiImage = UIImage(cgImage: cgImage)
+            guard let jpeg = uiImage.jpegData(compressionQuality: 0.8) else { return nil }
+            let outURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString + ".jpg")
+            try jpeg.write(to: outURL, options: .atomic)
+            return outURL
+        } catch {
+            return nil
+        }
+    }
+
+    /// User-picked file path: handles both audio (passthrough copy to temp) and video
+    /// (AVAssetExportSession to .m4a). Caller manages security-scoped resource access.
+    static func extractAudioFromLocalFile(_ fileURL: URL) async throws -> URL {
+        let ext = fileURL.pathExtension.lowercased()
+        let audioExtensions: Set<String> = ["m4a", "mp3", "wav", "aac", "caf", "mp4a"]
+        let tempDir = FileManager.default.temporaryDirectory
+        let outputURL = tempDir.appendingPathComponent(UUID().uuidString + ".m4a")
+
+        if audioExtensions.contains(ext) {
+            // Audio file — copy to temp so the security-scoped original can be released
+            // after this returns. Whisper reads from the copy.
+            try FileManager.default.copyItem(at: fileURL, to: outputURL)
+            rLog(.ok, step: "LocalFile", "Audio passthrough copied to \(outputURL.lastPathComponent)")
+            return outputURL
+        }
+
+        // Video file — extract audio via AVAssetExportSession
+        rLog(step: "LocalFile", "Extracting audio from video \(fileURL.lastPathComponent)")
+        return try await extractAudio(from: fileURL, to: outputURL)
+    }
+
+    /// Up to 4 attempts with exponential backoff on transient network errors.
+    /// Backoff: 1s, 2s, 4s. Catches connection-lost / timeout / not-connected /
+    /// data-not-allowed / cannot-connect-to-host. Other errors propagate immediately
+    /// so real failures don't get masked by retries.
+    private static func downloadWithRetry(request: URLRequest, maxAttempts: Int = 4) async throws -> (URL, URLResponse) {
         var lastError: Error = URLError(.unknown)
+        let transientCodes: Set<URLError.Code> = [
+            .networkConnectionLost,
+            .timedOut,
+            .notConnectedToInternet,
+            .cannotConnectToHost,
+            .cannotFindHost,
+            .dataNotAllowed,
+            .secureConnectionFailed,
+        ]
         for attempt in 1...maxAttempts {
             do {
                 return try await URLSession.shared.download(for: request)
-            } catch let error as URLError where [.networkConnectionLost, .timedOut, .notConnectedToInternet].contains(error.code) {
-                rLog(step: "Download", "Attempt \(attempt) failed (\(error.code.rawValue)), retrying...")
+            } catch let error as URLError where transientCodes.contains(error.code) {
                 lastError = error
-                try? await Task.sleep(for: .seconds(1))
+                if attempt == maxAttempts {
+                    rLog(.fail, step: "Download", "Attempt \(attempt)/\(maxAttempts) failed (\(error.code.rawValue)) — giving up")
+                    break
+                }
+                let delaySeconds = Int(pow(2.0, Double(attempt - 1)))   // 1, 2, 4
+                rLog(.warn, step: "Download", "Attempt \(attempt)/\(maxAttempts) failed (\(error.code.rawValue)), retrying in \(delaySeconds)s...")
+                try? await Task.sleep(for: .seconds(delaySeconds))
                 continue
             }
         }
@@ -1112,7 +1198,9 @@ enum VideoExtractor {
 
     // Returns the URL of the file actually written — may differ from audioURL if fallback path was used.
     @discardableResult
-    private static func extractAudio(from videoURL: URL, to audioURL: URL, httpHeaders: [String: String] = [:]) async throws -> URL {
+    /// Extracts a `.m4a` audio track from a video URL via AVAssetExportSession.
+    /// Internal so the local-file import path can reuse it.
+    static func extractAudio(from videoURL: URL, to audioURL: URL, httpHeaders: [String: String] = [:]) async throws -> URL {
         let assetOptions: [String: Any] = httpHeaders.isEmpty ? [:] : ["AVURLAssetHTTPHeaderFieldsKey": httpHeaders]
         let asset = AVURLAsset(url: videoURL, options: assetOptions.isEmpty ? nil : assetOptions)
         let tracks = try await asset.loadTracks(withMediaType: .audio)

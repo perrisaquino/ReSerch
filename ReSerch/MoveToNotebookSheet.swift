@@ -1,0 +1,163 @@
+import SwiftUI
+
+/// Modal triggered from the multi-select bulkBar to move selected transcripts
+/// into a notebook. Shows existing notebooks plus a "New Notebook" shortcut.
+/// If any of the selected entries already live in a notebook, also surfaces
+/// a "Remove from Notebook" action that moves them back to Unfiled.
+struct MoveToNotebookSheet: View {
+    var vm: TranscriptViewModel
+    let selectedIDs: Set<UUID>
+    var onMoved: (() -> Void)? = nil
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var showCreate = false
+    @State private var pendingMessage: String? = nil
+
+    private var selectedEntries: [TranscriptEntry] {
+        vm.history.filter { selectedIDs.contains($0.id) }
+    }
+
+    /// True if any selected transcript currently belongs to a notebook.
+    /// Drives the "Remove from Notebook" affordance.
+    private var anyAssigned: Bool {
+        selectedEntries.contains { $0.notebookID != nil }
+    }
+
+    private var countLabel: String {
+        let n = selectedIDs.count
+        return n == 1 ? "1 transcript" : "\(n) transcripts"
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    newNotebookRow
+
+                    if !vm.notebooks.isEmpty {
+                        ForEach(vm.notebooks) { notebook in
+                            Button {
+                                move(to: notebook)
+                            } label: {
+                                notebookRow(notebook)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    if anyAssigned {
+                        Button {
+                            move(to: nil)
+                        } label: {
+                            removeRow
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 4)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 24)
+            }
+            .background(Color(red: 0.07, green: 0.09, blue: 0.13).ignoresSafeArea())
+            .navigationTitle("Move \(countLabel)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            .sheet(isPresented: $showCreate) {
+                CreateNotebookSheet(vm: vm) { newNotebook in
+                    move(to: newNotebook)
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    // MARK: - Rows
+
+    private var newNotebookRow: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "plus.circle.fill")
+                .font(.system(size: 22))
+                .foregroundStyle(Color.accentColor)
+            Text("New Notebook")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.accentColor.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 1)
+        )
+        .onTapGesture { showCreate = true }
+    }
+
+    private func notebookRow(_ notebook: Notebook) -> some View {
+        let count = vm.transcripts(in: notebook).count
+        return HStack(spacing: 14) {
+            Capsule()
+                .fill(notebook.color)
+                .frame(width: 4, height: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(notebook.name)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text(count == 1 ? "1 transcript" : "\(count) transcripts")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
+        )
+    }
+
+    private var removeRow: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "tray")
+                .font(.system(size: 18))
+                .foregroundStyle(.white.opacity(0.7))
+                .frame(width: 24)
+            Text("Remove from Notebook")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(.white.opacity(0.85))
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.03))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color.white.opacity(0.05), lineWidth: 1)
+        )
+    }
+
+    // MARK: - Actions
+
+    private func move(to notebook: Notebook?) {
+        vm.assignNotebook(selectedEntries, to: notebook)
+        onMoved?()
+        dismiss()
+    }
+}

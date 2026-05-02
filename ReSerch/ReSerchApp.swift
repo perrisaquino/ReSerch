@@ -24,18 +24,38 @@ struct ReSerchApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView(vm: vm)
+            RootTabView(vm: vm)
                 .background(Color(red: 0.07, green: 0.09, blue: 0.13).ignoresSafeArea())
                 .onAppear {
-                    print("[ReSerch] ContentView.onAppear")
+                    print("[ReSerch] RootTabView.onAppear")
                     NotificationManager.requestPermission()
                 }
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background || newPhase == .inactive {
                 vm.saveHistory()
+                vm.saveNotebooks()
                 UIApplication.shared.ignoreSnapshotOnNextApplicationLaunch()
             }
         }
+    }
+}
+
+private struct RootTabView: View {
+    var vm: TranscriptViewModel
+
+    var body: some View {
+        TabView {
+            ContentView(vm: vm)
+                .tabItem {
+                    Label("Feed", systemImage: "text.bubble")
+                }
+
+            NotebooksView(vm: vm)
+                .tabItem {
+                    Label("Notebooks", systemImage: "books.vertical")
+                }
+        }
+        .tint(Color.accentColor)
     }
 }

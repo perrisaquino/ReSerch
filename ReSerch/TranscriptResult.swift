@@ -102,10 +102,35 @@ struct TranscriptEntry: Identifiable, Hashable, Codable {
     var result: TranscriptResult
     let date: Date
 
+    /// Optional notebook membership. References `Notebook.id`. Nil = "Unfiled".
+    /// Resolved to a `Notebook` by `TranscriptViewModel` from its loaded notebooks.
+    var notebookID: UUID?
+
+    /// Free-text note attached to the whole transcript, separate from inline annotations.
+    /// Renders in markdown export as `## Notes` above the caption.
+    var documentNote: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, result, date, notebookID, documentNote
+    }
+
     init(result: TranscriptResult) {
         self.id = UUID()
         self.result = result
         self.date = Date()
+        self.notebookID = nil
+        self.documentNote = nil
+    }
+
+    // Custom decode so older entries (saved before notebookID/documentNote existed)
+    // still load with nil for the new fields rather than failing.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        result = try c.decode(TranscriptResult.self, forKey: .result)
+        date = try c.decode(Date.self, forKey: .date)
+        notebookID = try c.decodeIfPresent(UUID.self, forKey: .notebookID)
+        documentNote = try c.decodeIfPresent(String.self, forKey: .documentNote)
     }
 
     var url: String { result.url }

@@ -9,6 +9,7 @@ final class TranscriptViewModel {
     var result: TranscriptResult? = nil
     var status: FetchStatus = .idle
     var history: [TranscriptEntry] = []
+    var notebooks: [Notebook] = []
     var copied: Bool = false
     var modelDownloadProgress: Double = 0
     var isDownloadingModel: Bool = false
@@ -38,9 +39,15 @@ final class TranscriptViewModel {
             .appendingPathComponent("reserch_history.json")
     }
 
+    private var notebooksFileURL: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("reserch_notebooks.json")
+    }
+
     init() {
         print("[ReSerch] TranscriptViewModel.init started")
         loadHistory()
+        loadNotebooks()
         Task { await whisperTranscriber.initializeIfCached() }
     }
 
@@ -134,6 +141,12 @@ final class TranscriptViewModel {
             return
         }
 
+        await withBackgroundTask(name: "reserch.fetch") {
+            await fetchTranscriptInner(raw: raw, url: url)
+        }
+    }
+
+    private func fetchTranscriptInner(raw: String, url: URL) async {
         currentTask?.cancel()
         result = nil
         status = .fetchingCaptions
@@ -158,6 +171,11 @@ final class TranscriptViewModel {
                     transcriptResult = try await YouTubeFetcher.fetch(videoId: videoId, originalURL: raw)
                     rLog(.ok, step: "YouTube", "Got transcript: \(transcriptResult.transcript.count) chars ⏱ \(elapsed(since: tYT))")
 
+                case .localFile:
+                    // .localFile is never produced by PlatformRouter.detect() — local files
+                    // go through `vm.transcribeLocalFile(_:displayName:)` directly. This case
+                    // exists only so the switch is exhaustive. Treat as unknown if it ever lands here.
+                    fallthrough
                 case .tiktok, .instagram, .twitter, .threads, .youtubeShorts, .unknown:
                     rLog(step: "Whisper", "Model ready: \(whisperTranscriber.isModelReady())")
                     guard whisperTranscriber.isModelReady() else {
@@ -233,7 +251,7 @@ final class TranscriptViewModel {
                     case .twitter: platformName = "Twitter"
                     case .threads: platformName = "Threads"
                     case .youtubeShorts: platformName = "YouTube Shorts"
-                    default: platformName = "Video"
+                    case .localFile, .youtube, .unknown: platformName = "Video"
                     }
 
                     transcriptResult = TranscriptResult(
@@ -272,6 +290,81 @@ final class TranscriptViewModel {
         await currentTask?.value
     }
 
+    /// Transcribes a user-picked local audio or video file. Bypasses URL parsing
+    /// and runs the same audio → Whisper → TranscriptResult tail as the social URL flow.
+    /// Caller is responsible for ending security-scoped resource access AFTER this returns.
+    /// `isVideo` controls whether we attempt thumbnail extraction.
+    func transcribeLocalFile(_ fileURL: URL, displayName: String, isVideo: Bool) async {
+        await withBackgroundTask(name: "reserch.localfile") {
+            await transcribeLocalFileInner(fileURL, displayName: displayName, isVideo: isVideo)
+        }
+    }
+
+    private func transcribeLocalFileInner(_ fileURL: URL, displayName: String, isVideo: Bool) async {
+        currentTask?.cancel()
+        result = nil
+
+        currentTask = Task {
+            do {
+                DebugLogger.shared.clear()
+                let t0 = Date()
+                rLog(step: "LocalFile", "Importing: \(fileURL.lastPathComponent) (\(displayName))")
+
+                // Whisper model must be ready — same gate as the social audio path
+                guard whisperTranscriber.isModelReady() else {
+                    status = .needsModel
+                    return
+                }
+
+                // Extract thumbnail in parallel with audio extraction, when relevant.
+                async let thumbnailURL: URL? = isVideo ? VideoExtractor.extractThumbnail(from: fileURL) : nil
+
+                status = .downloadingVideo(0.1)
+                rLog(step: "LocalFile", "Extracting audio (audio passthrough or video → m4a)")
+                let audioURL = try await VideoExtractor.extractAudioFromLocalFile(fileURL)
+                rLog(.ok, step: "LocalFile", "Audio ready: \(audioURL.lastPathComponent)")
+
+                status = .transcribing(0)
+                rLog(step: "Whisper", "Starting transcription")
+                let transcript = try await whisperTranscriber.transcribe(audioURL: audioURL) { p in
+                    Task { @MainActor [weak self] in self?.status = .transcribing(p) }
+                }
+                rLog(.ok, step: "Whisper", "Done — \(transcript.count) chars")
+
+                try? FileManager.default.removeItem(at: audioURL)
+                let formatted = transcript.paragraphized()
+                let thumb = await thumbnailURL
+
+                if Task.isCancelled { return }
+
+                let elapsed = String(format: "%.2fs", Date().timeIntervalSince(t0))
+                rLog(.ok, step: "Total", "Local-file transcribe done in \(elapsed)")
+
+                let transcriptResult = TranscriptResult(
+                    title: displayName,
+                    author: "",
+                    handle: "",
+                    platform: "Local File",
+                    url: "",
+                    caption: "",
+                    transcript: formatted,
+                    thumbnailURL: thumb
+                )
+                result = transcriptResult
+                status = .done
+                saveToHistory(transcriptResult)
+
+            } catch is CancellationError {
+                rLog(.warn, step: "Task", "Local-file transcribe cancelled")
+                status = .idle
+            } catch {
+                rLog(.fail, step: "Error", "Local-file transcribe failed: \(error)")
+                status = .error(error.localizedDescription)
+            }
+        }
+        await currentTask?.value
+    }
+
     func fetchBatch(rawText: String) async {
         // Parse one URL per line, skip blanks
         let urls = rawText
@@ -291,28 +384,90 @@ final class TranscriptViewModel {
         batchCurrent = 0
         isBatchProcessing = true
 
-        // Ask iOS for extra time to keep running after user backgrounds the app
+        // Ask iOS for extra time to keep running after user backgrounds the app.
+        // Expiration handler MUST cancel in-flight work AND end the task — otherwise
+        // iOS may force-kill the process instead of suspending cleanly.
         var bgTask = UIBackgroundTaskIdentifier.invalid
-        bgTask = UIApplication.shared.beginBackgroundTask(withName: "reserch.batch") {
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "reserch.batch") { [weak self] in
+            self?.currentTask?.cancel()
             UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
         }
 
         var saved = 0
         var failed = 0
 
-        for url in urls {
+        for (idx, url) in urls.enumerated() {
             batchCurrent += 1
             urlInput = url
+            rLog(step: "Batch", "[\(batchCurrent)/\(batchTotal)] Starting \(url)")
+
+            // Snapshot history size before fetching so we can detect a successful save
+            // independent of the .status race that previously over-counted failures.
+            let sizeBefore = history.count
             await fetchTranscript()
-            if case .done = status { saved += 1 } else { failed += 1 }
+            let didSave = history.count > sizeBefore
+
+            if didSave {
+                saved += 1
+                rLog(.ok, step: "Batch", "[\(batchCurrent)/\(batchTotal)] Saved")
+                let lastTitle = history.first?.title
+                NotificationManager.sendBatchProgress(current: saved, total: batchTotal, lastTitle: lastTitle)
+            } else {
+                failed += 1
+                rLog(.fail, step: "Batch", "[\(batchCurrent)/\(batchTotal)] Failed (status: \(status))")
+            }
+
+            // Brief pause between iterations: lets any platform-side rate limit /
+            // cookie / connection state settle before the next request. Negligible
+            // user impact (1s on a 30-60s transcribe each).
+            if idx < urls.count - 1 {
+                try? await Task.sleep(for: .seconds(1))
+            }
         }
 
         isBatchProcessing = false
         batchTotal = 0
         batchCurrent = 0
-        UIApplication.shared.endBackgroundTask(bgTask)
+        if bgTask != .invalid {
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
+        }
 
         NotificationManager.sendBatchComplete(count: saved, failed: failed, playlistName: playlistName)
+    }
+
+    /// Public cancellation hook — used by sheets that need to abort an in-flight transcribe
+    /// when the user dismisses (e.g. ImportMediaSheet's Cancel button).
+    func cancelCurrentTask() {
+        currentTask?.cancel()
+        currentTask = nil
+        if !isBatchProcessing {
+            status = .idle
+        }
+    }
+
+    /// Wraps work in a `UIBackgroundTask` so iOS gives the app ~3 minutes of background
+    /// time after the user locks/backgrounds the device. The expiration handler cancels
+    /// the in-flight currentTask AND ends the background task — both required for iOS
+    /// to consider the app a good citizen. Without canceling the work, iOS may force-kill
+    /// the process instead of suspending cleanly.
+    @MainActor
+    private func withBackgroundTask<T>(name: String, _ work: () async throws -> T) async rethrows -> T {
+        var bgTask = UIBackgroundTaskIdentifier.invalid
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            // iOS is about to suspend us. Cancel the work so it doesn't run partially
+            // and leave state in a half-saved condition.
+            self?.currentTask?.cancel()
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
+        }
+        defer {
+            if bgTask != .invalid {
+                UIApplication.shared.endBackgroundTask(bgTask)
+            }
+        }
+        return try await work()
     }
 
     func saveToHistory(_ result: TranscriptResult) {
@@ -320,6 +475,19 @@ final class TranscriptViewModel {
         history.insert(entry, at: 0)
         if history.count > 100 { history = Array(history.prefix(100)) }
         saveHistoryAsync()
+
+        // Magic moment milestones — Apple throttles to 3 prompts/year, so these are safe
+        // to fire whenever they qualify. Order matters: earlier (more impressive) milestone
+        // wins because promptedThisSession blocks the rest until next launch.
+        if result.platform == "Local File" {
+            ReviewPromptManager.shared.recordMilestone(.firstLocalFile)
+        }
+        if history.count == 5 {
+            ReviewPromptManager.shared.recordMilestone(.fifthTranscript)
+        }
+        if history.count >= 10 && history.contains(where: { $0.notebookID != nil }) {
+            ReviewPromptManager.shared.recordMilestone(.tenthOrganizedTranscript)
+        }
     }
 
     func deleteEntry(_ entry: TranscriptEntry) {
@@ -341,7 +509,24 @@ final class TranscriptViewModel {
     }
 
     func markdownFor(_ entry: TranscriptEntry) -> String {
-        MarkdownFormatter.format(entry.result)
+        let nb = notebook(for: entry.notebookID)
+        return MarkdownFormatter.format(entry.result, notebook: nb, documentNote: entry.documentNote)
+    }
+
+    /// Compiles every transcript in `notebook` into a single markdown document, separated by `---`.
+    /// Useful for piping a research topic into a single Obsidian note.
+    func combinedMarkdown(for notebook: Notebook) -> String {
+        let entries = transcripts(in: notebook)
+        guard !entries.isEmpty else {
+            return "# \(notebook.name)\n\n(No transcripts in this notebook yet.)\n"
+        }
+        var header = "# \(notebook.name)\n\n_\(entries.count) transcript\(entries.count == 1 ? "" : "s")_\n\n"
+        if let desc = notebook.notebookDescription, !desc.isEmpty {
+            header += "> \(desc.replacingOccurrences(of: "\n", with: "\n> "))\n\n"
+        }
+        header += "---\n\n"
+        let body = entries.map { markdownFor($0) }.joined(separator: "\n\n---\n\n")
+        return header + body
     }
 
     // MARK: - Persistence
@@ -377,6 +562,132 @@ final class TranscriptViewModel {
             // Delete corrupt file so next launch starts clean
             try? FileManager.default.removeItem(at: historyFileURL)
             history = []
+        }
+    }
+
+    // MARK: - Notebooks
+
+    /// Returns transcripts that belong to the given notebook, newest-first.
+    func transcripts(in notebook: Notebook) -> [TranscriptEntry] {
+        history.filter { $0.notebookID == notebook.id }
+    }
+
+    /// Returns transcripts not assigned to any notebook, newest-first.
+    var unfiledTranscripts: [TranscriptEntry] {
+        history.filter { $0.notebookID == nil }
+    }
+
+    /// Looks up a notebook by ID. Returns nil if the notebook was deleted.
+    func notebook(for id: UUID?) -> Notebook? {
+        guard let id else { return nil }
+        return notebooks.first { $0.id == id }
+    }
+
+    @discardableResult
+    func createNotebook(name: String, colorHex: String? = nil, notebookDescription: String? = nil) -> Notebook {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedDesc = notebookDescription?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nb = Notebook(
+            name: trimmed,
+            colorHex: colorHex,
+            notebookDescription: (trimmedDesc?.isEmpty ?? true) ? nil : trimmedDesc
+        )
+        notebooks.append(nb)
+        sortNotebooks()
+        saveNotebooksAsync()
+        return nb
+    }
+
+    func renameNotebook(_ notebook: Notebook, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let idx = notebooks.firstIndex(where: { $0.id == notebook.id }) else { return }
+        notebooks[idx].name = trimmed
+        sortNotebooks()
+        saveNotebooksAsync()
+    }
+
+    func recolorNotebook(_ notebook: Notebook, to colorHex: String?) {
+        guard let idx = notebooks.firstIndex(where: { $0.id == notebook.id }) else { return }
+        notebooks[idx].colorHex = colorHex
+        saveNotebooksAsync()
+    }
+
+    func setNotebookDescription(_ notebook: Notebook, to description: String) {
+        let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let idx = notebooks.firstIndex(where: { $0.id == notebook.id }) else { return }
+        notebooks[idx].notebookDescription = trimmed.isEmpty ? nil : trimmed
+        saveNotebooksAsync()
+    }
+
+    /// Deletes a notebook. Transcripts inside it move back to Unfiled (notebookID = nil).
+    func deleteNotebook(_ notebook: Notebook) {
+        notebooks.removeAll { $0.id == notebook.id }
+        for idx in history.indices where history[idx].notebookID == notebook.id {
+            history[idx].notebookID = nil
+        }
+        saveNotebooksAsync()
+        saveHistoryAsync()
+    }
+
+    /// Moves a transcript into a notebook (or to Unfiled when notebook is nil).
+    func assignNotebook(_ entry: TranscriptEntry, to notebook: Notebook?) {
+        guard let idx = history.firstIndex(where: { $0.id == entry.id }) else { return }
+        history[idx].notebookID = notebook?.id
+        saveHistoryAsync()
+    }
+
+    /// Bulk-move version. Used by the multi-select bulkBar.
+    func assignNotebook(_ entries: [TranscriptEntry], to notebook: Notebook?) {
+        for entry in entries {
+            if let idx = history.firstIndex(where: { $0.id == entry.id }) {
+                history[idx].notebookID = notebook?.id
+            }
+        }
+        saveHistoryAsync()
+    }
+
+    func setDocumentNote(_ entry: TranscriptEntry, to note: String) {
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let idx = history.firstIndex(where: { $0.id == entry.id }) else { return }
+        history[idx].documentNote = trimmed.isEmpty ? nil : note
+        saveHistoryAsync()
+    }
+
+    /// Alphabetical, case-insensitive. Stable ordering for the Notebooks tab list.
+    private func sortNotebooks() {
+        notebooks.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    // MARK: - Notebook persistence
+
+    func saveNotebooks() {
+        guard let data = try? JSONEncoder().encode(notebooks) else { return }
+        try? data.write(to: notebooksFileURL, options: .atomic)
+    }
+
+    private func saveNotebooksAsync() {
+        let snapshot = notebooks
+        let url = notebooksFileURL
+        Task.detached(priority: .utility) {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    private func loadNotebooks() {
+        guard let data = try? Data(contentsOf: notebooksFileURL) else {
+            print("[ReSerch] loadNotebooks — no file, starting fresh")
+            return
+        }
+        do {
+            notebooks = try JSONDecoder().decode([Notebook].self, from: data)
+            sortNotebooks()
+            print("[ReSerch] loadNotebooks — loaded \(notebooks.count) notebooks")
+        } catch {
+            print("[ReSerch] loadNotebooks — decode FAILED: \(error)")
+            try? FileManager.default.removeItem(at: notebooksFileURL)
+            notebooks = []
         }
     }
 }

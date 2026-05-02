@@ -7,6 +7,10 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var selectionMode = false
     @State private var selectedIDs: Set<UUID> = []
+    @State private var showMoveToNotebook = false
+    @State private var singleMoveEntry: TranscriptEntry? = nil
+    @State private var importKind: ImportMediaSheet.Kind? = nil
+    @State private var showTestimonialOffer = false
     @State private var gate = ExportGate.shared
     @State private var showPaywall = false
     @State private var showOnboarding = !OnboardingView.hasCompleted
@@ -31,6 +35,33 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
+            }
+            .sheet(isPresented: $showMoveToNotebook) {
+                MoveToNotebookSheet(
+                    vm: vm,
+                    selectedIDs: selectedIDs,
+                    onMoved: {
+                        selectionMode = false
+                        selectedIDs.removeAll()
+                    }
+                )
+            }
+            .sheet(item: $singleMoveEntry) { entry in
+                MoveToNotebookSheet(vm: vm, selectedIDs: [entry.id])
+            }
+            .sheet(item: $importKind) { kind in
+                ImportMediaSheet(kind: kind, vm: vm)
+            }
+            .sheet(isPresented: $showTestimonialOffer) {
+                TestimonialOfferSheet()
+                    .presentationDetents([.height(280)])
+                    .presentationDragIndicator(.visible)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .offerTestimonial)) { _ in
+                // Posted by ReviewPromptManager ~6s after a high-tier review prompt fires.
+                // Soft secondary ask — opt-in path into the existing Submit Feedback form
+                // pre-set to .testimonial.
+                showTestimonialOffer = true
             }
         }
         .preferredColorScheme(.dark)
@@ -105,6 +136,20 @@ struct ContentView: View {
                 }
 
                 Button {
+                    showMoveToNotebook = true
+                } label: {
+                    Image(systemName: "folder")
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.white)
+                        .frame(width: 52, height: 52)
+                        .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .strokeBorder(Color.white.opacity(0.15), lineWidth: 1)
+                        )
+                }
+
+                Button {
                     selectedIDs.forEach { id in
                         if let entry = vm.history.first(where: { $0.id == id }) {
                             vm.deleteEntry(entry)
@@ -139,6 +184,7 @@ struct ContentView: View {
                                 entry: entry,
                                 isSelected: selectedIDs.contains(entry.id),
                                 selectionMode: selectionMode,
+                                notebook: vm.notebook(for: entry.notebookID),
                                 onTap: {
                                     if selectionMode {
                                         if selectedIDs.contains(entry.id) {
@@ -152,7 +198,8 @@ struct ContentView: View {
                                 },
                                 onCopy: { copyMarkdown(for: entry) },
                                 onDelete: { vm.deleteEntry(entry) },
-                                onRename: { vm.renameEntry(entry, to: $0) }
+                                onRename: { vm.renameEntry(entry, to: $0) },
+                                onMoveToNotebook: { singleMoveEntry = entry }
                             )
                             Divider()
                                 .background(Color.white.opacity(0.08))
@@ -187,8 +234,22 @@ struct ContentView: View {
     // MARK: - Add Button
 
     private var addButton: some View {
-        Button {
-            showAdd = true
+        Menu {
+            Button {
+                showAdd = true
+            } label: {
+                Label("Paste URL", systemImage: "link")
+            }
+            Button {
+                importKind = .audio
+            } label: {
+                Label("Import Audio", systemImage: "waveform")
+            }
+            Button {
+                importKind = .video
+            } label: {
+                Label("Import Video", systemImage: "video")
+            }
         } label: {
             Image(systemName: "plus")
                 .font(.title2)
@@ -199,6 +260,8 @@ struct ContentView: View {
                 .shadow(color: .black.opacity(0.4), radius: 8, y: 4)
         }
         .padding(24)
+        .sensoryFeedback(.selection, trigger: showAdd)
+        .sensoryFeedback(.selection, trigger: importKind)
     }
 
     // MARK: - Actions
@@ -222,10 +285,14 @@ struct TranscriptRow: View {
     let entry: TranscriptEntry
     var isSelected: Bool = false
     var selectionMode: Bool = false
+    /// Optional notebook the entry belongs to. Drives the inline indicator chip.
+    var notebook: Notebook? = nil
     let onTap: () -> Void
     let onCopy: () -> Void
     let onDelete: () -> Void
     let onRename: (String) -> Void
+    /// Triggered from the row's "..." menu. Caller decides how to present the move sheet.
+    var onMoveToNotebook: (() -> Void)? = nil
 
     @State private var showCopied = false
     @State private var showRenameAlert = false
@@ -341,13 +408,32 @@ struct TranscriptRow: View {
                 }
             }
 
-            if let dur = entry.result.duration {
-                HStack(spacing: 4) {
-                    Image(systemName: "clock")
-                    Text(dur)
+            // Notebook chip + duration on one row when either is present
+            if notebook != nil || entry.result.duration != nil {
+                HStack(spacing: 8) {
+                    if let nb = notebook {
+                        HStack(spacing: 5) {
+                            Capsule()
+                                .fill(nb.color)
+                                .frame(width: 3, height: 10)
+                            Text(nb.name)
+                                .font(.caption2)
+                                .foregroundStyle(.white.opacity(0.65))
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.white.opacity(0.06), in: Capsule())
+                    }
+                    if let dur = entry.result.duration {
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock")
+                            Text(dur)
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.gray)
+                    }
                 }
-                .font(.caption2)
-                .foregroundStyle(.gray)
             }
 
             // Transcript preview
@@ -380,6 +466,14 @@ struct TranscriptRow: View {
                 showRenameAlert = true
             } label: {
                 Label("Rename", systemImage: "pencil")
+            }
+
+            if let onMoveToNotebook {
+                Button {
+                    onMoveToNotebook()
+                } label: {
+                    Label(notebook == nil ? "Add to Notebook" : "Move to Notebook", systemImage: "folder")
+                }
             }
 
             Button {
