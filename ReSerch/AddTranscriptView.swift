@@ -691,15 +691,29 @@ struct AddTranscriptStatusView: View {
 
         // Cookie-related failures (post-pre-flight, e.g. expired session) — re-present the
         // in-app sign-in sheet for the platform the user is trying to transcribe.
+        // The error description string is generic ("post may be private or require login"),
+        // so we MUST inspect the URL host to pick the right provider — falling back to a
+        // default would have offered Instagram sign-in for failed TikTok URLs.
         if lower.contains("private") || lower.contains("require login") || lower.contains("login") {
-            let provider: TranscriptViewModel.SafariProvider = {
-                if let url = URL(string: vm.urlInput),
-                   let host = url.host?.lowercased(),
-                   host.contains("youtube.com") || host.contains("youtu.be") {
-                    return .youtube
-                }
-                return .instagram
-            }()
+            let host = URL(string: vm.urlInput)?.host?.lowercased() ?? ""
+
+            // TikTok and YouTube short URLs don't require auth in this app — TikTok scrapes
+            // the public page; YouTube short URLs hit the public player. A "private/login"
+            // failure on these domains is a parsing problem (e.g. unsupported post type),
+            // not a session problem. Offer plain retry, never sign-in.
+            if host.contains("tiktok.com") {
+                return (retry, nil)
+            }
+
+            let provider: TranscriptViewModel.SafariProvider
+            if host.contains("youtube.com") || host.contains("youtu.be") {
+                provider = .youtube
+            } else if host.contains("instagram.com") || host.contains("threads.net") {
+                provider = .instagram
+            } else {
+                // Unknown host — don't guess. Just retry.
+                return (retry, nil)
+            }
             return (
                 EducationalBanner.Action(label: "Sign in again") {
                     signInProvider = provider
