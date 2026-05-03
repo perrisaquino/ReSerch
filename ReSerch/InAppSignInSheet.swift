@@ -3,19 +3,22 @@ import WebKit
 
 /// Full-size WKWebView sheet that loads a platform sign-in URL inside the app.
 ///
-/// Critical detail: this view *must* use `WKWebsiteDataStore.default()` because that's the
-/// same persistent store `InstagramWebExtractor` and `YouTubeShortsExtractor` read from.
-/// Cookies set during sign-in here become visible to those extractors immediately.
+/// **Cookie isolation truth:** `WKWebsiteDataStore.default()` is the *app's* persistent
+/// store, NOT Safari's. iOS sandboxes Safari's cookies away from every other app — there
+/// is no public API to read them. So even if the user is signed into Instagram in Safari,
+/// our extractors have no way to use that session. The user signs in here ONCE and the
+/// cookies persist in the app's own store across launches until Instagram signs them out.
 ///
-/// Mobile Safari uses a different (Safari-private) store, so opening the sign-in URL via
-/// `UIApplication.shared.open` does *not* surface cookies to the extractors. That's why
-/// we need an in-app sheet instead of bouncing to Safari.
+/// On open we proactively check `CookieChecker` again — if cookies are already present
+/// (e.g. parent missed the cache because of a race), we auto-dismiss instead of forcing
+/// the user to look at the sign-in form they don't actually need.
 struct InAppSignInSheet: View {
     let provider: TranscriptViewModel.SafariProvider
     let onDismiss: () -> Void
 
     @State private var isLoading = true
     @State private var currentURL: URL?
+    @State private var didAutoDismiss = false
     @Environment(\.dismiss) private var envDismiss
 
     var body: some View {
@@ -52,6 +55,22 @@ struct InAppSignInSheet: View {
                     }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.accentColor)
+                }
+            }
+            .task {
+                // Race-safe auto-dismiss: if cookies are already present, skip the sheet.
+                // Common when the parent's pre-check missed (cookie store was loading) or
+                // when the user reopens after a previous successful sign-in this session.
+                guard !didAutoDismiss else { return }
+                let hasSession: Bool
+                switch provider {
+                case .instagram: hasSession = await CookieChecker.hasInstagramSession()
+                case .youtube:   hasSession = await CookieChecker.hasYouTubeSession()
+                }
+                if hasSession {
+                    didAutoDismiss = true
+                    envDismiss()
+                    onDismiss()
                 }
             }
         }

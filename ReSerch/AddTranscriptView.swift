@@ -659,9 +659,23 @@ struct AddTranscriptStatusView: View {
             tone: .info,
             icon: "person.badge.key.fill",
             title: "Sign in to \(provider.displayName)",
-            message: "ReSerch needs an in-app sign-in so it can read \(provider.displayName) on your device. Your password never leaves the secure system sign-in form. One tap, and every link after that just works.",
+            message: "iOS keeps Safari's sessions private from other apps, so ReSerch needs its own sign-in. Sign in once here — every \(provider.displayName) link after that just works, until \(provider.displayName) signs you out (months from now).",
             primary: .init(label: "Sign in") {
-                signInProvider = provider
+                // Belt-and-suspenders pre-check: if cookies somehow showed up since the
+                // pre-flight ran (e.g. concurrent successful sign-in flow, store reload),
+                // skip the sheet entirely and just retry the extraction.
+                Task {
+                    let hasSession: Bool
+                    switch provider {
+                    case .instagram: hasSession = await CookieChecker.hasInstagramSession()
+                    case .youtube:   hasSession = await CookieChecker.hasYouTubeSession()
+                    }
+                    if hasSession {
+                        await vm.fetchTranscript()
+                    } else {
+                        signInProvider = provider
+                    }
+                }
             },
             secondary: .init(label: "Try anyway") {
                 Task { await vm.fetchTranscriptBypassingPreflight() }

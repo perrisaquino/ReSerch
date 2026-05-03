@@ -1,13 +1,18 @@
 import Foundation
 import WebKit
 
-/// Centralized check for whether the user has an active Safari session for the platforms
-/// ReSerch transcribes. Cookies are read from `WKWebsiteDataStore.default()` — the same
-/// store Safari uses, which is also what `InstagramWebExtractor` and `YouTubeShortsExtractor`
-/// rely on for authenticated CDN access.
+/// Centralized check for whether the user has an active in-app session for the platforms
+/// ReSerch transcribes. Cookies are read from `WKWebsiteDataStore.default()` — the *app's*
+/// own persistent cookie store, NOT Safari's. iOS sandboxes Safari's cookies away from
+/// every other app. So a "no session" result here only means our app hasn't seen a sign-in
+/// yet (or the cookies expired) — the user may still be signed into Safari independently.
+///
+/// `InstagramWebExtractor`, `YouTubeShortsExtractor`, and `InAppSignInSheet` all read from
+/// the same store, so cookies set by the in-app sign-in sheet become immediately visible
+/// to the extractors.
 ///
 /// Used as a pre-flight check inside `TranscriptViewModel.fetchTranscript()` so the user
-/// sees an instant "Sign in to Safari" banner instead of waiting 20s for an extractor timeout.
+/// sees an instant in-app sign-in banner instead of waiting 20s for an extractor timeout.
 @MainActor
 enum CookieChecker {
     /// True if Safari has any non-expired Instagram or Threads session cookies. Both products

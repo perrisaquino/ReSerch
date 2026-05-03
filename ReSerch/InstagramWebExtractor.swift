@@ -60,7 +60,10 @@ final class InstagramWebExtractor: NSObject {
             self.continuation = cont
 
             let config = WKWebViewConfiguration()
-            config.websiteDataStore = .default()    // shares Safari cookies — picks up Instagram login
+            // App's persistent cookie store. NOT shared with Safari — iOS sandboxes
+            // Safari's cookies away from every other app. Cookies only appear here after
+            // the user signs in via `InAppSignInSheet`, which uses this same store.
+            config.websiteDataStore = .default()
             config.mediaTypesRequiringUserActionForPlayback = []
 
             // Register the message handler BEFORE creating the web view
