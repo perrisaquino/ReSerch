@@ -15,19 +15,30 @@ import WebKit
 /// sees an instant in-app sign-in banner instead of waiting 20s for an extractor timeout.
 @MainActor
 enum CookieChecker {
-    /// True if Safari has any non-expired Instagram or Threads session cookies. Both products
-    /// share Meta's CDN, so either set is sufficient.
+    /// True if the app's WKWebView store has any non-expired Instagram or Threads session
+    /// cookies. Both products share Meta's CDN, so either set is sufficient.
     static func hasInstagramSession() async -> Bool {
         let cookies = await WKWebsiteDataStore.default().httpCookieStore.allCookies()
         let now = Date()
-        return cookies.contains { cookie in
-            let domain = cookie.domain.lowercased()
-            guard domain.contains("instagram.com") || domain.contains("threads.net") else { return false }
-            if let expires = cookie.expiresDate, expires < now { return false }
+        let metaCookies = cookies.filter { c in
+            let d = c.domain.lowercased()
+            return d.contains("instagram.com") || d.contains("threads.net")
+        }
+        let sessionMarkers = metaCookies.filter { c in
+            if let expires = c.expiresDate, expires < now { return false }
             // Look for session-bearing cookies — sessionid is the canonical "logged in" marker.
             // ds_user_id / csrftoken indicate an authenticated session even when sessionid is httpOnly.
-            return ["sessionid", "ds_user_id", "csrftoken"].contains(cookie.name)
+            return ["sessionid", "ds_user_id", "csrftoken"].contains(c.name)
         }
+        // Diagnostic log — visible in Console.app when filtering "ReSerch". When the user
+        // says "it keeps asking me to sign in", we can immediately see whether the app
+        // store has cookies (suggesting a name/expiry bug) or genuinely has none (suggesting
+        // the sign-in didn't persist).
+        let foundNames = sessionMarkers.map { $0.name }.sorted().joined(separator: ",")
+        rLog(sessionMarkers.isEmpty ? .warn : .ok,
+             step: "CookieChecker",
+             "Instagram check — total cookies:\(cookies.count) meta:\(metaCookies.count) session-markers:\(sessionMarkers.count) [\(foundNames)]")
+        return !sessionMarkers.isEmpty
     }
 
     /// True if Safari has either a YouTube login marker (LOGIN_INFO) or has accepted YouTube's

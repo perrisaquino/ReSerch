@@ -19,6 +19,7 @@ struct InAppSignInSheet: View {
     @State private var isLoading = true
     @State private var currentURL: URL?
     @State private var didAutoDismiss = false
+    @State private var showSignedInToast = false
     @Environment(\.dismiss) private var envDismiss
 
     var body: some View {
@@ -29,7 +30,8 @@ struct InAppSignInSheet: View {
                 SignInWebView(
                     url: provider.signInURL,
                     isLoading: $isLoading,
-                    currentURL: $currentURL
+                    currentURL: $currentURL,
+                    onPossibleSuccess: { handlePossibleSuccess() }
                 )
 
                 if isLoading {
@@ -37,12 +39,31 @@ struct InAppSignInSheet: View {
                         .tint(.white)
                         .scaleEffect(1.2)
                 }
+
+                if showSignedInToast {
+                    VStack {
+                        Spacer()
+                        HStack(spacing: 10) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("Signed in. Closing...")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.white)
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 12)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .padding(.bottom, 32)
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
             .navigationTitle("Sign in to \(provider.displayName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") {
+                        rLog(step: "SignIn", "User cancelled — no cookies saved")
                         envDismiss()
                         onDismiss()
                     }
@@ -50,8 +71,21 @@ struct InAppSignInSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
-                        envDismiss()
-                        onDismiss()
+                        // Smarter Done: verify cookies before closing. If the user taps Done
+                        // before actually signing in, we want to keep the sheet open with an
+                        // explanation rather than silently leaving them in a broken state.
+                        Task {
+                            let hasSession: Bool
+                            switch provider {
+                            case .instagram: hasSession = await CookieChecker.hasInstagramSession()
+                            case .youtube:   hasSession = await CookieChecker.hasYouTubeSession()
+                            }
+                            rLog(hasSession ? .ok : .warn,
+                                 step: "SignIn",
+                                 "Done tapped — session cookies present: \(hasSession)")
+                            envDismiss()
+                            onDismiss()
+                        }
                     }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.accentColor)
@@ -67,6 +101,7 @@ struct InAppSignInSheet: View {
                 case .instagram: hasSession = await CookieChecker.hasInstagramSession()
                 case .youtube:   hasSession = await CookieChecker.hasYouTubeSession()
                 }
+                rLog(step: "SignIn", "Sheet opened — initial session check: \(hasSession)")
                 if hasSession {
                     didAutoDismiss = true
                     envDismiss()
@@ -75,6 +110,30 @@ struct InAppSignInSheet: View {
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    /// Called by the WKWebView's navigation delegate when the URL leaves the login flow.
+    /// We don't trust the URL alone — we verify there's an actual session cookie before
+    /// declaring success. Avoids false positives from intermediate redirects (challenge,
+    /// 2FA, captcha pages all sit at non-login URLs but don't mean signed-in yet).
+    private func handlePossibleSuccess() {
+        guard !didAutoDismiss else { return }
+        Task { @MainActor in
+            let hasSession: Bool
+            switch provider {
+            case .instagram: hasSession = await CookieChecker.hasInstagramSession()
+            case .youtube:   hasSession = await CookieChecker.hasYouTubeSession()
+            }
+            guard hasSession, !didAutoDismiss else { return }
+            didAutoDismiss = true
+            rLog(.ok, step: "SignIn", "Auto-detected successful sign-in — closing sheet")
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                showSignedInToast = true
+            }
+            try? await Task.sleep(for: .seconds(1.0))
+            envDismiss()
+            onDismiss()
+        }
     }
 }
 
@@ -95,11 +154,14 @@ private struct SignInWebView: UIViewRepresentable {
     let url: URL
     @Binding var isLoading: Bool
     @Binding var currentURL: URL?
+    /// Fired when the WKWebView lands on a non-login URL — sheet's task verifies cookies
+    /// before treating this as a real success (could be challenge / 2FA / captcha redirect).
+    var onPossibleSuccess: () -> Void = {}
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        // Critical: the SAME data store InstagramWebExtractor / YouTubeShortsExtractor read.
-        // Cookies set here are visible to the extractors immediately.
+        // App's persistent cookie store. NOT shared with Safari (iOS sandboxes that).
+        // Cookies written here are visible to InstagramWebExtractor / YouTubeShortsExtractor.
         config.websiteDataStore = .default()
 
         let wv = WKWebView(frame: .zero, configuration: config)
@@ -128,6 +190,7 @@ private struct SignInWebView: UIViewRepresentable {
             DispatchQueue.main.async {
                 self.parent.isLoading = false
                 self.parent.currentURL = webView.url
+                self.checkForSuccess(webView: webView)
             }
         }
 
@@ -137,6 +200,26 @@ private struct SignInWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.parent.isLoading = false }
+        }
+
+        /// Heuristic: if we landed somewhere that isn't a login / challenge / two-factor
+        /// page, the user might have just successfully signed in. Notify the parent so it
+        /// can verify with a cookie check (URL alone is too noisy — Instagram bounces
+        /// through several intermediate URLs even before login completes).
+        private func checkForSuccess(webView: WKWebView) {
+            guard let path = webView.url?.path.lowercased() else { return }
+            let stillSigningIn = path.contains("/accounts/login")
+                || path.contains("/accounts/signup")
+                || path.contains("/accounts/two_factor")
+                || path.contains("/accounts/onetap")
+                || path.contains("/challenge")
+                || path.contains("/captcha")
+                || path.contains("/identifier")
+                || path.contains("/signin")
+                || path.contains("/oauth")
+            if !stillSigningIn {
+                parent.onPossibleSuccess()
+            }
         }
     }
 }
