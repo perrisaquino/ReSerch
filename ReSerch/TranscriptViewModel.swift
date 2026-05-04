@@ -35,20 +35,122 @@ final class TranscriptViewModel {
     private let whisperTranscriber = WhisperTranscriber()
 
     private var historyFileURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("reserch_history.json")
+        iCloudSyncService.shared.activeURL(for: .history)
     }
 
     private var notebooksFileURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("reserch_notebooks.json")
+        iCloudSyncService.shared.activeURL(for: .notebooks)
     }
 
     init() {
         print("[ReSerch] TranscriptViewModel.init started")
+        let tInit = Date()
+        // Run the iCloud first-launch migration BEFORE the first read. Otherwise an
+        // upgrader's local data sits in Documents/ while loadHistory() reads the
+        // (still-empty) ubiquity container and shows an empty feed.
+        iCloudSyncService.shared.migrateLocalToCloudIfNeededSync()
+        let tHistory = Date()
         loadHistory()
+        print("[ReSerch] loadHistory ⏱ \(Int(Date().timeIntervalSince(tHistory) * 1000))ms")
+        let tNotebooks = Date()
         loadNotebooks()
+        print("[ReSerch] loadNotebooks ⏱ \(Int(Date().timeIntervalSince(tNotebooks) * 1000))ms")
+        migrateLegacyCarouselTranscripts()
+        migrateCarouselTranscriptsV2()
+        print("[ReSerch] TranscriptViewModel.init total ⏱ \(Int(Date().timeIntervalSince(tInit) * 1000))ms")
         Task { await whisperTranscriber.initializeIfCached() }
+    }
+
+    /// One-shot pass that rewrites the `transcript` field of carousel entries saved
+    /// before CarouselNoteFormatter was slimmed down. Old entries had a duplicated
+    /// metadata block at the top of the transcript (header, caption blockquote,
+    /// creator/likes/source). New format is per-slide content only — wrapper metadata
+    /// comes from MarkdownFormatter at export time. Migration is idempotent: it skips
+    /// any entry that doesn't start with the legacy header signature, so re-runs are safe.
+    private func migrateLegacyCarouselTranscripts() {
+        let migrationKey = "carouselTranscriptMigratedV1"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+
+        var changed = 0
+        for idx in history.indices {
+            guard let slides = history[idx].result.carouselSlides, !slides.isEmpty else { continue }
+            let transcript = history[idx].result.transcript
+            // Legacy format started with `# [Name](url) — Carousel`. New format starts with `### Slide 1`.
+            guard transcript.hasPrefix("# [") else { continue }
+
+            var lines: [String] = []
+            for slide in slides {
+                lines.append("### Slide \(slide.index + 1)")
+                if let filename = slide.localImageFilename {
+                    lines.append("![[\(filename)]]")
+                }
+                let text = (slide.recognizedText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                lines.append(text.isEmpty ? "*[no text detected]*" : text)
+                lines.append("")
+            }
+            history[idx].result.transcript = lines.joined(separator: "\n")
+            changed += 1
+        }
+
+        if changed > 0 {
+            saveHistoryAsync()
+            print("[ReSerch] migrateLegacyCarouselTranscripts — rewrote \(changed) entries")
+        }
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+
+    /// V2: strip Obsidian image-embed lines (`![[file.jpg]]`) and reflow OCR text so
+    /// hard mid-sentence newlines become spaces. Both fix the "weird paste" experience
+    /// outside Obsidian — Apple Notes / Notion / iMessage all show the embed syntax as
+    /// raw text and treat every newline as a hard break. Idempotent: re-running over
+    /// a clean entry is a no-op because there'll be no embed lines and the reflow pass
+    /// preserves already-clean paragraphs.
+    private func migrateCarouselTranscriptsV2() {
+        let migrationKey = "carouselTranscriptMigratedV2"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+
+        var changed = 0
+        for idx in history.indices {
+            guard let slides = history[idx].result.carouselSlides, !slides.isEmpty else { continue }
+            let original = history[idx].result.transcript
+
+            var lines: [String] = []
+            for slide in slides {
+                lines.append("### Slide \(slide.index + 1)")
+                let text = reflowOCR(slide.recognizedText)
+                lines.append(text.isEmpty ? "*[no text detected]*" : text)
+                lines.append("")
+            }
+            let rewritten = lines.joined(separator: "\n")
+            if rewritten != original {
+                history[idx].result.transcript = rewritten
+                changed += 1
+            }
+        }
+
+        if changed > 0 {
+            saveHistoryAsync()
+            print("[ReSerch] migrateCarouselTranscriptsV2 — rewrote \(changed) entries")
+        }
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+
+    /// Same reflow logic as `CarouselNoteFormatter.reflow`, duplicated locally so the
+    /// migration doesn't need to import the formatter just for one helper. Single-newlines
+    /// inside a paragraph collapse to spaces; double-newlines (paragraph breaks) survive.
+    private func reflowOCR(_ raw: String?) -> String {
+        guard let raw, !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "" }
+        return raw
+            .components(separatedBy: "\n\n")
+            .map { paragraph in
+                paragraph
+                    .split(separator: "\n", omittingEmptySubsequences: true)
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " ")
+            }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
     }
 
     enum FetchStatus: Equatable {
@@ -190,8 +292,15 @@ final class TranscriptViewModel {
                     if !bypass {
                         switch platform {
                         case .instagram, .threads:
-                            if await !CookieChecker.hasInstagramSession() {
-                                rLog(.warn, step: "Pre-flight", "No Instagram session in Safari")
+                            // Trust marker: once the user has successfully extracted from
+                            // Instagram in this app, skip the cookie pre-flight. WKWebView's
+                            // cookie store is eventually-consistent, so a fresh check right
+                            // after sign-in can return false even when cookies are landing.
+                            // If the session has actually expired, the extractor will fail
+                            // and we'll surface sign-in reactively at that point.
+                            let trusted = UserDefaults.standard.bool(forKey: "instagramSessionTrusted")
+                            if !trusted, await !CookieChecker.hasInstagramSession() {
+                                rLog(.warn, step: "Pre-flight", "No Instagram session and no trust marker — prompting sign-in")
                                 status = .needsSafariSignIn(.instagram)
                                 return
                             }
@@ -211,6 +320,14 @@ final class TranscriptViewModel {
                         if hasVideo {
                             rLog(.warn, step: "Carousel", "Mixed carousel detected — videos in this post weren't transcribed.")
                         }
+                        // Successful Instagram fetch — mark session as trusted so we don't
+                        // re-prompt sign-in on subsequent carousels.
+                        switch platform {
+                        case .instagram, .threads:
+                            UserDefaults.standard.set(true, forKey: "instagramSessionTrusted")
+                        default:
+                            break
+                        }
                         rLog(step: "Carousel", "Routing to CarouselCoordinator for \(payload.slideCount) slides")
                         status = .extractingCarousel(message: "Extracting slide 1 of \(payload.slideCount)…")
                         let coord = CarouselCoordinator()
@@ -222,6 +339,13 @@ final class TranscriptViewModel {
                         saveToHistory(carouselResult)
                         status = .done
                         return
+                    }
+                    // Successful Instagram video extraction — same trust marker logic.
+                    switch platform {
+                    case .instagram, .threads:
+                        UserDefaults.standard.set(true, forKey: "instagramSessionTrusted")
+                    default:
+                        break
                     }
                     rLog(.ok, step: "Extract", "Got video URL ⏱ \(elapsed(since: tExtract))")
                     rLog(step: "Extract", "URL: \(meta.videoURL.absoluteString.prefix(80))...")
@@ -266,6 +390,7 @@ final class TranscriptViewModel {
                         likeCount: meta.likeCount,
                         commentCount: meta.commentCount,
                         shareCount: meta.shareCount,
+                        saveCount: meta.saveCount,
                         duration: meta.formattedDuration,
                         postedDate: meta.postedDate,
                         thumbnailURL: meta.thumbnailURL

@@ -6,13 +6,12 @@ import UIKit
 final class CarouselOCRService {
 
     /// Where downloaded images go when the embed-images setting is on.
-    /// Documents directory under `CarouselImages/` so they're exportable to Obsidian.
+    /// Goes through `iCloudSyncService` so the directory is the iCloud ubiquity container
+    /// when sync is on, otherwise local Documents/CarouselImages. Either way the on-disk
+    /// directory exists by the time this returns.
+    @MainActor
     static func imagesDirectory() throws -> URL {
-        let docs = try FileManager.default.url(for: .documentDirectory,
-                                               in: .userDomainMask,
-                                               appropriateFor: nil,
-                                               create: true)
-        let dir = docs.appendingPathComponent("CarouselImages", isDirectory: true)
+        let dir = iCloudSyncService.shared.activeURL(for: .carouselImages)
         if !FileManager.default.fileExists(atPath: dir.path) {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         }

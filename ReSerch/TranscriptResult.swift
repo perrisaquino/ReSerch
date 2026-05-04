@@ -23,19 +23,98 @@ struct Annotation: Codable, Identifiable {
 struct TranscriptCarouselSlide: Codable, Identifiable, Hashable {
     let index: Int
     let imageURL: URL?       // remote CDN URL — survives across reinstalls
-    let localImagePath: URL? // app's Documents copy when "Embed images" was on; nil otherwise
+    /// Filename inside the carousel-images directory (e.g. `post-slug-00.jpg`).
+    /// Filename-only because the absolute Documents path embeds the app container's
+    /// install UUID, which changes on reinstall — storing the absolute URL would break
+    /// every image reference after a fresh install. Resolution to a real URL happens
+    /// at display time via `displayURL`, which checks the active sync directory.
+    let localImageFilename: String?
     let recognizedText: String?  // empty string if OCR ran but found nothing; nil if OCR failed
 
     var id: Int { index }
 
+    enum CodingKeys: String, CodingKey {
+        case index, imageURL, localImageFilename, recognizedText
+        // Legacy field — read on decode, never written. See custom init(from:).
+        case localImagePath
+    }
+
+    init(index: Int, imageURL: URL?, localImageFilename: String?, recognizedText: String?) {
+        self.index = index
+        self.imageURL = imageURL
+        self.localImageFilename = localImageFilename
+        self.recognizedText = recognizedText
+    }
+
+    // Custom decode so entries saved before the filename refactor still load.
+    // Old payloads stored `localImagePath: URL?` — we extract just the lastPathComponent
+    // so the data lines up with the new field. New payloads only have `localImageFilename`.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        index = try c.decode(Int.self, forKey: .index)
+        imageURL = try c.decodeIfPresent(URL.self, forKey: .imageURL)
+        recognizedText = try c.decodeIfPresent(String.self, forKey: .recognizedText)
+        if let filename = try c.decodeIfPresent(String.self, forKey: .localImageFilename) {
+            localImageFilename = filename
+        } else if let legacyURL = try c.decodeIfPresent(URL.self, forKey: .localImagePath) {
+            localImageFilename = legacyURL.lastPathComponent
+        } else {
+            localImageFilename = nil
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(index, forKey: .index)
+        try c.encodeIfPresent(imageURL, forKey: .imageURL)
+        try c.encodeIfPresent(localImageFilename, forKey: .localImageFilename)
+        try c.encodeIfPresent(recognizedText, forKey: .recognizedText)
+        // localImagePath intentionally not written — legacy field, lives only on read.
+    }
+
     /// Best-available image URL: prefers the local file if it still exists on disk,
     /// otherwise falls back to the remote URL. Local files get wiped on app reinstall;
     /// the remote URL keeps working until the platform CDN expires (months).
+    /// The local lookup goes through `CarouselImageDirectoryResolver`, which the sync
+    /// service can override at runtime to point at the iCloud ubiquity container.
     var displayURL: URL? {
-        if let local = localImagePath, FileManager.default.fileExists(atPath: local.path) {
-            return local
+        if let filename = localImageFilename,
+           let dir = CarouselImageDirectoryResolver.shared.currentDirectory(),
+           case let candidate = dir.appendingPathComponent(filename),
+           FileManager.default.fileExists(atPath: candidate.path) {
+            return candidate
         }
         return imageURL
+    }
+}
+
+/// Single source of truth for "where do carousel images currently live on disk."
+/// Defaults to the app's local Documents/CarouselImages, but `iCloudSyncService` swaps
+/// in the ubiquity container directory when sync is on. Keeping this dependency-free
+/// means `TranscriptCarouselSlide` (a pure value type) doesn't need to know about
+/// the sync service or take a constructor argument.
+final class CarouselImageDirectoryResolver: @unchecked Sendable {
+    static let shared = CarouselImageDirectoryResolver()
+    private let lock = NSLock()
+    private var override: URL?
+
+    func setOverride(_ url: URL?) {
+        lock.lock(); defer { lock.unlock() }
+        override = url
+    }
+
+    func currentDirectory() -> URL? {
+        lock.lock()
+        let o = override
+        lock.unlock()
+        if let o { return o }
+        guard let docs = try? FileManager.default.url(for: .documentDirectory,
+                                                      in: .userDomainMask,
+                                                      appropriateFor: nil,
+                                                      create: false) else {
+            return nil
+        }
+        return docs.appendingPathComponent("CarouselImages", isDirectory: true)
     }
 }
 
@@ -53,6 +132,9 @@ struct TranscriptResult: Codable {
     let likeCount: Int?
     let commentCount: Int?
     let shareCount: Int?
+    /// TikTok-only public metric (`collectCount` from the page's stats object).
+    /// Instagram and YouTube don't expose save counts to non-owners.
+    let saveCount: Int?
     let duration: String?
     let postedDate: Date?
     let thumbnailURL: URL?
@@ -64,7 +146,7 @@ struct TranscriptResult: Codable {
     enum CodingKeys: String, CodingKey {
         case title, editableTitle, author, handle, platform, url, caption
         case transcript, annotations
-        case viewCount, likeCount, commentCount, shareCount
+        case viewCount, likeCount, commentCount, shareCount, saveCount
         case duration, postedDate, thumbnailURL
         case carouselSlides
     }
@@ -81,6 +163,7 @@ struct TranscriptResult: Codable {
         likeCount: Int? = nil,
         commentCount: Int? = nil,
         shareCount: Int? = nil,
+        saveCount: Int? = nil,
         duration: String? = nil,
         postedDate: Date? = nil,
         thumbnailURL: URL? = nil,
@@ -98,6 +181,7 @@ struct TranscriptResult: Codable {
         self.likeCount = likeCount
         self.commentCount = commentCount
         self.shareCount = shareCount
+        self.saveCount = saveCount
         self.duration = duration
         self.postedDate = postedDate
         self.thumbnailURL = thumbnailURL
@@ -122,6 +206,7 @@ struct TranscriptResult: Codable {
         likeCount     = try c.decodeIfPresent(Int.self,    forKey: .likeCount)
         commentCount  = try c.decodeIfPresent(Int.self,    forKey: .commentCount)
         shareCount    = try c.decodeIfPresent(Int.self,    forKey: .shareCount)
+        saveCount     = try c.decodeIfPresent(Int.self,    forKey: .saveCount)
         duration      = try c.decodeIfPresent(String.self, forKey: .duration)
         postedDate    = try c.decodeIfPresent(Date.self,   forKey: .postedDate)
         thumbnailURL  = try c.decodeIfPresent(URL.self,    forKey: .thumbnailURL)
@@ -182,6 +267,7 @@ struct VideoMetadata {
     let likeCount: Int?
     let commentCount: Int?
     let shareCount: Int?
+    let saveCount: Int?
     let durationSeconds: Int?
     let postedDate: Date?
     let thumbnailURL: URL?

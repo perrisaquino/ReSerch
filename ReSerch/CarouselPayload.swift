@@ -15,7 +15,11 @@ struct CarouselPayload: Equatable {
     let creatorDisplayName: String
     let creatorProfileURL: URL
     let caption: String
+    let viewCount: Int?
     let likeCount: Int?
+    let commentCount: Int?
+    let shareCount: Int?
+    let saveCount: Int?
     let postedDate: Date?
     var slides: [CarouselSlide]
 

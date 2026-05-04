@@ -59,6 +59,7 @@ enum VideoExtractor {
             likeCount: result.likeCount,
             commentCount: nil,
             shareCount: nil,
+            saveCount: nil,
             durationSeconds: parseDurationSeconds(result.duration),
             postedDate: result.postedDate,
             thumbnailURL: result.thumbnailURL
@@ -146,7 +147,7 @@ enum VideoExtractor {
         let videoURL = try extractTikTokVideoURLFallback(from: html)
         return VideoMetadata(
             videoURL: videoURL, title: "TikTok Video", author: "Unknown", handle: "",
-            caption: "", viewCount: nil, likeCount: nil, commentCount: nil, shareCount: nil,
+            caption: "", viewCount: nil, likeCount: nil, commentCount: nil, shareCount: nil, saveCount: nil,
             durationSeconds: nil, postedDate: nil, thumbnailURL: nil
         )
     }
@@ -275,6 +276,8 @@ enum VideoExtractor {
         let likeCount = stats?["diggCount"] as? Int
         let commentCount = stats?["commentCount"] as? Int
         let shareCount = stats?["shareCount"] as? Int
+        // TikTok exposes `collectCount` publicly — Instagram and YouTube don't.
+        let saveCount = stats?["collectCount"] as? Int
 
         // Duration
         let durationSeconds: Int?
@@ -306,7 +309,7 @@ enum VideoExtractor {
         return VideoMetadata(
             videoURL: videoURL, title: title, author: author, handle: handle,
             caption: caption, viewCount: viewCount, likeCount: likeCount,
-            commentCount: commentCount, shareCount: shareCount,
+            commentCount: commentCount, shareCount: shareCount, saveCount: saveCount,
             durationSeconds: durationSeconds, postedDate: postedDate, thumbnailURL: thumbnailURL
         )
     }
@@ -407,7 +410,7 @@ enum VideoExtractor {
                 return VideoMetadata(
                     videoURL: bestVideoURL, title: meta.title, author: meta.author, handle: meta.handle,
                     caption: meta.caption, viewCount: meta.viewCount, likeCount: meta.likeCount,
-                    commentCount: meta.commentCount, shareCount: meta.shareCount,
+                    commentCount: meta.commentCount, shareCount: meta.shareCount, saveCount: meta.saveCount,
                     durationSeconds: meta.durationSeconds, postedDate: meta.postedDate,
                     thumbnailURL: meta.thumbnailURL
                 )
@@ -436,6 +439,7 @@ enum VideoExtractor {
                     likeCount: domMetadata?.likeCount ?? embedMeta.likeCount,
                     commentCount: domMetadata?.commentCount ?? embedMeta.commentCount,
                     shareCount: nil,
+                    saveCount: nil,
                     durationSeconds: nil,
                     postedDate: domMetadata?.postedDate ?? embedMeta.postedDate,
                     thumbnailURL: embedMeta.thumbnailURL ?? domMetadata?.thumbnailURL
@@ -454,7 +458,7 @@ enum VideoExtractor {
                 return VideoMetadata(
                     videoURL: bestVideoURL, title: meta.title, author: meta.author, handle: meta.handle,
                     caption: meta.caption, viewCount: meta.viewCount, likeCount: meta.likeCount,
-                    commentCount: meta.commentCount, shareCount: meta.shareCount,
+                    commentCount: meta.commentCount, shareCount: meta.shareCount, saveCount: meta.saveCount,
                     durationSeconds: meta.durationSeconds, postedDate: meta.postedDate,
                     thumbnailURL: meta.thumbnailURL
                 )
@@ -466,7 +470,7 @@ enum VideoExtractor {
                 return VideoMetadata(
                     videoURL: videoURL, title: htmlMeta.title, author: htmlMeta.author, handle: htmlMeta.handle,
                     caption: htmlMeta.caption, viewCount: htmlMeta.viewCount, likeCount: htmlMeta.likeCount,
-                    commentCount: htmlMeta.commentCount, shareCount: htmlMeta.shareCount,
+                    commentCount: htmlMeta.commentCount, shareCount: htmlMeta.shareCount, saveCount: htmlMeta.saveCount,
                     durationSeconds: htmlMeta.durationSeconds, postedDate: htmlMeta.postedDate,
                     thumbnailURL: htmlMeta.thumbnailURL
                 )
@@ -475,7 +479,7 @@ enum VideoExtractor {
             return VideoMetadata(
                 videoURL: videoURL, title: "Instagram Reel",
                 author: "Instagram", handle: "",
-                caption: "", viewCount: nil, likeCount: nil, commentCount: nil, shareCount: nil,
+                caption: "", viewCount: nil, likeCount: nil, commentCount: nil, shareCount: nil, saveCount: nil,
                 durationSeconds: nil, postedDate: nil, thumbnailURL: nil
             )
         }
@@ -605,7 +609,7 @@ enum VideoExtractor {
         rLog(.ok, step: "Instagram", "Resolved video URL: \(resolvedURL.absoluteString.prefix(80))...")
         return VideoMetadata(
             videoURL: resolvedURL, title: title, author: author, handle: handle,
-            caption: "", viewCount: nil, likeCount: nil, commentCount: nil, shareCount: nil,
+            caption: "", viewCount: nil, likeCount: nil, commentCount: nil, shareCount: nil, saveCount: nil,
             durationSeconds: nil, postedDate: nil, thumbnailURL: thumbnailURL
         )
     }
@@ -665,6 +669,7 @@ enum VideoExtractor {
             likeCount: likeCount,
             commentCount: commentCount,
             shareCount: nil,
+            saveCount: nil,
             durationSeconds: nil,
             postedDate: postedDate,
             thumbnailURL: thumbnailURL
@@ -770,6 +775,7 @@ enum VideoExtractor {
             likeCount: nil,
             commentCount: nil,
             shareCount: nil,
+            saveCount: nil,
             durationSeconds: nil,
             postedDate: nil,
             thumbnailURL: thumbnailURL
@@ -833,7 +839,7 @@ enum VideoExtractor {
         return VideoMetadata(
             videoURL: resolvedURL, title: title, author: author, handle: handle,
             caption: caption, viewCount: viewCount, likeCount: likeCount,
-            commentCount: commentCount, shareCount: nil,
+            commentCount: commentCount, shareCount: nil, saveCount: nil,
             durationSeconds: durationSeconds, postedDate: postedDate, thumbnailURL: thumbnailURL
         )
     }
@@ -892,7 +898,7 @@ enum VideoExtractor {
             author: "Twitter",
             handle: "",
             caption: "",
-            viewCount: nil, likeCount: nil, commentCount: nil, shareCount: nil,
+            viewCount: nil, likeCount: nil, commentCount: nil, shareCount: nil, saveCount: nil,
             durationSeconds: nil, postedDate: nil, thumbnailURL: nil
         )
     }

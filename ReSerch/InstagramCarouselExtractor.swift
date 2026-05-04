@@ -76,7 +76,11 @@ enum InstagramCarouselExtractor {
         let profileURL = URL(string: "https://www.instagram.com/\(handle)/")!
 
         let caption = (item["caption"] as? [String: Any])?["text"] as? String ?? ""
-        let likeCount = item["like_count"] as? Int
+        let likeCount    = item["like_count"] as? Int
+        let commentCount = item["comment_count"] as? Int
+        let viewCount    = item["play_count"] as? Int ?? item["view_count"] as? Int
+        // Instagram does NOT expose save counts to non-owners. Confirmed: no `save_count`
+        // in either the modern items API or the legacy GraphQL shortcode_media response.
         let postedTs = item["taken_at"] as? TimeInterval
         let postedDate = postedTs.map { Date(timeIntervalSince1970: $0) }
 
@@ -97,7 +101,11 @@ enum InstagramCarouselExtractor {
             creatorDisplayName: displayName,
             creatorProfileURL: profileURL,
             caption: caption,
+            viewCount: viewCount,
             likeCount: likeCount,
+            commentCount: commentCount,
+            shareCount: nil,
+            saveCount: nil,
             postedDate: postedDate,
             slides: slides
         )
@@ -141,7 +149,10 @@ enum InstagramCarouselExtractor {
 
         let caption = (((json["edge_media_to_caption"] as? [String: Any])?["edges"] as? [[String: Any]])?
             .first?["node"] as? [String: Any])?["text"] as? String ?? ""
-        let likeCount = (json["edge_media_preview_like"] as? [String: Any])?["count"] as? Int
+        let likeCount    = (json["edge_media_preview_like"] as? [String: Any])?["count"] as? Int
+        let commentCount = (json["edge_media_to_parent_comment"] as? [String: Any])?["count"] as? Int
+            ?? (json["edge_media_to_comment"] as? [String: Any])?["count"] as? Int
+        let viewCount    = json["video_view_count"] as? Int
         let postedTs = json["taken_at_timestamp"] as? TimeInterval
         let postedDate = postedTs.map { Date(timeIntervalSince1970: $0) }
 
@@ -159,7 +170,11 @@ enum InstagramCarouselExtractor {
             creatorDisplayName: displayName,
             creatorProfileURL: profileURL,
             caption: caption,
+            viewCount: viewCount,
             likeCount: likeCount,
+            commentCount: commentCount,
+            shareCount: nil,
+            saveCount: nil,
             postedDate: postedDate,
             slides: slides
         )

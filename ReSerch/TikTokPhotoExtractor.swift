@@ -32,7 +32,12 @@ enum TikTokPhotoExtractor {
         let profileURL = URL(string: "https://www.tiktok.com/@\(handle)")!
 
         let caption = (itemStruct["desc"] as? String) ?? ""
-        let likeCount = (itemStruct["stats"] as? [String: Any])?["diggCount"] as? Int
+        let stats = itemStruct["stats"] as? [String: Any]
+        let likeCount    = stats?["diggCount"] as? Int
+        let viewCount    = stats?["playCount"] as? Int
+        let commentCount = stats?["commentCount"] as? Int
+        let shareCount   = stats?["shareCount"] as? Int
+        let saveCount    = stats?["collectCount"] as? Int
         let createTime = itemStruct["createTime"] as? TimeInterval
         let postedDate = createTime.map { Date(timeIntervalSince1970: $0) }
 
@@ -50,7 +55,11 @@ enum TikTokPhotoExtractor {
             creatorDisplayName: displayName,
             creatorProfileURL: profileURL,
             caption: caption,
+            viewCount: viewCount,
             likeCount: likeCount,
+            commentCount: commentCount,
+            shareCount: shareCount,
+            saveCount: saveCount,
             postedDate: postedDate,
             slides: slides
         )

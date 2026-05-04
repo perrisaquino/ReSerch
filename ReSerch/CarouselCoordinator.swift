@@ -25,7 +25,7 @@ final class CarouselCoordinator {
             TranscriptCarouselSlide(
                 index: slide.index,
                 imageURL: slide.imageURL,
-                localImagePath: slide.localImagePath,
+                localImageFilename: slide.localImagePath?.lastPathComponent,
                 recognizedText: slide.recognizedText
             )
         }
@@ -38,7 +38,11 @@ final class CarouselCoordinator {
             url: processed.postURL.absoluteString,
             caption: processed.caption,
             transcript: markdown,
+            viewCount: processed.viewCount,
             likeCount: processed.likeCount,
+            commentCount: processed.commentCount,
+            shareCount: processed.shareCount,
+            saveCount: processed.saveCount,
             postedDate: processed.postedDate,
             thumbnailURL: processed.slides.first?.imageURL,
             carouselSlides: displaySlides

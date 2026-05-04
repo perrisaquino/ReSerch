@@ -22,7 +22,7 @@ struct CarouselSlidesStripView: View {
     private static let maxVisibleDots = 10
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 6) {
             tabView
             pageDots
         }
@@ -60,19 +60,16 @@ struct CarouselSlidesStripView: View {
     @ViewBuilder
     private func slideImage(for slide: TranscriptCarouselSlide) -> some View {
         if let url = slide.displayURL {
-            // AsyncImage handles both file:// and https:// URLs uniformly.
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .empty:
-                    placeholder
-                case .success(let image):
+            // CachedAsyncImage's L1 memory cache makes re-renders (caused by the
+            // lazy-render gate above) zero-cost — no re-downloads when swiping
+            // back to a slide we've already seen.
+            CachedAsyncImage(url: url) { image in
+                if let image {
                     image
                         .resizable()
                         .scaledToFit()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                case .failure:
-                    placeholder
-                @unknown default:
+                } else {
                     placeholder
                 }
             }
@@ -99,27 +96,18 @@ struct CarouselSlidesStripView: View {
     // MARK: - Page dots
 
     private var pageDots: some View {
-        HStack(spacing: 6) {
-            // N / total counter on the LEFT — matches Instagram / Photos convention.
-            Text("\(currentIndex + 1) / \(slides.count)")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.white.opacity(0.55))
-            Spacer()
-            dotsRow
-            Spacer()
-            // Spacer balance so dots stay visually centered between counter and right edge.
-            Text(" ")
-                .font(.caption2)
-                .opacity(0)
-        }
-        .padding(.horizontal, 18)
-        .padding(.bottom, 8)
+        // Instagram-style: tight, centered dots, no counter, no flanking elements.
+        // The whole row hugs the bottom of the image so the indicator reads as
+        // "attached to" the carousel, not floating in its own band.
+        dotsRow
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, 8)
     }
 
     @ViewBuilder
     private var dotsRow: some View {
         if slides.count <= Self.maxVisibleDots {
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 ForEach(slides) { slide in
                     dotButton(for: slide.index)
                 }
@@ -135,13 +123,14 @@ struct CarouselSlidesStripView: View {
     /// last 3 dots. Order is rebuilt around `currentIndex` so the active dot is always
     /// visible regardless of carousel length.
     private var collapsedDotsRow: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             ForEach(visibleDotIndexes, id: \.self) { idx in
                 if idx < 0 {
-                    // Sentinel for ellipsis
-                    Text("…")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.40))
+                    // Sentinel for ellipsis — sized to match dots so spacing stays uniform
+                    Circle()
+                        .fill(Color.white.opacity(0.30))
+                        .frame(width: 3, height: 3)
+                        .frame(width: 12, height: 28)
                 } else {
                     dotButton(for: idx)
                 }
@@ -169,16 +158,18 @@ struct CarouselSlidesStripView: View {
     /// Dot is wrapped in a 44×44pt invisible hit area so a tap anywhere near it jumps
     /// to that slide. The visible dot stays 6×6pt — only the touch target grows.
     private func dotButton(for index: Int) -> some View {
-        Button {
+        let isActive = index == currentIndex
+        return Button {
             withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
                 currentIndex = index
             }
         } label: {
             Circle()
-                .fill(index == currentIndex ? Color.white : Color.white.opacity(0.30))
+                .fill(isActive ? Color.white : Color.white.opacity(0.35))
                 .frame(width: 6, height: 6)
-                .frame(width: 28, height: 28)         // hit area, visible dot stays 6pt
+                .frame(width: 22, height: 28)         // tight hit area keeps dots visually grouped
                 .contentShape(Rectangle())
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isActive)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Go to slide \(index + 1)")

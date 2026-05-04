@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import StoreKit
 import MessageUI
+import Combine
 
 struct SettingsView: View {
     @State private var prefs = MarkdownStylePrefs.shared
@@ -12,6 +13,10 @@ struct SettingsView: View {
     @State private var versionTapCount = 0
     @State private var debugUnlocked = false
     @AppStorage("embedCarouselImages") private var embedCarouselImages: Bool = true
+    @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled: Bool = true
+    @State private var exportShareItem: URL?
+    @State private var exportInProgress = false
+    @State private var exportError: String?
     @Environment(\.dismiss) private var dismiss
 
     private static let debugUnlockTaps = 7
@@ -50,6 +55,10 @@ struct SettingsView: View {
                 Section("Carousels") {
                     Toggle("Embed images in carousel notes", isOn: $embedCarouselImages)
                 }
+
+                syncSection
+
+                dataSection
 
                 feedbackSection
 
@@ -114,6 +123,122 @@ struct SettingsView: View {
                 showRedeem = true
             }
         }
+    }
+
+    @ViewBuilder
+    private var syncSection: some View {
+        Section {
+            Toggle("iCloud Sync", isOn: Binding(
+                get: { iCloudSyncEnabled },
+                set: { newValue in
+                    iCloudSyncEnabled = newValue
+                    iCloudSyncService.shared.objectWillChange.send()
+                    if newValue {
+                        Task { await iCloudSyncService.shared.migrateLocalToCloudIfNeeded() }
+                    }
+                }
+            ))
+            Text(syncStatusText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text("Sync")
+        } footer: {
+            Text("When on, your transcripts and notebooks back up to your iCloud account so they survive uninstalling and reinstalling the app on the same Apple ID.")
+        }
+    }
+
+    @ViewBuilder
+    private var dataSection: some View {
+        Section {
+            Button {
+                Task { await runExport() }
+            } label: {
+                if exportInProgress {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("Preparing export…")
+                    }
+                } else {
+                    Label("Export All Data", systemImage: "square.and.arrow.up")
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .disabled(exportInProgress)
+            if let exportError {
+                Text(exportError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        } header: {
+            Text("Data")
+        } footer: {
+            Text("Saves all transcripts, notebooks, and carousel images as a single ZIP file you can store in Files, iCloud Drive, or anywhere else.")
+        }
+    }
+
+    private var syncStatusText: String {
+        switch iCloudSyncService.shared.status {
+        case .ready:
+            if let last = iCloudSyncService.shared.lastSyncedAt {
+                let formatter = RelativeDateTimeFormatter()
+                formatter.unitsStyle = .abbreviated
+                return "Synced \(formatter.localizedString(for: last, relativeTo: Date()))"
+            }
+            return "Connected to iCloud."
+        case .migrating:
+            return "Moving your data to iCloud…"
+        case .localOnly:
+            return "Sync is off — data lives only on this device."
+        case .unavailable:
+            return "iCloud unavailable. Sign in to iCloud in iPhone Settings to enable sync."
+        }
+    }
+
+    @MainActor
+    private func runExport() async {
+        exportInProgress = true
+        exportError = nil
+        defer { exportInProgress = false }
+        do {
+            // History/notebooks reach us via the active app instance; pull them off
+            // the current TranscriptViewModel via the environment-injected reference.
+            // To keep this section self-contained we read the JSON files directly
+            // from the sync service so the export works even before the view model
+            // has been wired up. Falls back to empty arrays if either file is absent.
+            let history = (try? Self.loadHistory()) ?? []
+            let notebooks = (try? Self.loadNotebooks()) ?? []
+            let url = try DataExportService.makeArchive(history: history, notebooks: notebooks)
+            presentShareSheet(for: url)
+        } catch {
+            exportError = "Could not build export. \(error.localizedDescription)"
+        }
+    }
+
+    private static func loadHistory() throws -> [TranscriptEntry] {
+        let url = iCloudSyncService.shared.activeURL(for: .history)
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        let data = try Data(contentsOf: url)
+        return try JSONDecoder().decode([TranscriptEntry].self, from: data)
+    }
+
+    private static func loadNotebooks() throws -> [Notebook] {
+        let url = iCloudSyncService.shared.activeURL(for: .notebooks)
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        let data = try Data(contentsOf: url)
+        return try JSONDecoder().decode([Notebook].self, from: data)
+    }
+
+    private func presentShareSheet(for url: URL) {
+        let av = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        if let popover = av.popoverPresentationController,
+           let window = UIApplication.shared.keyForegroundWindow {
+            popover.sourceView = window
+            popover.sourceRect = CGRect(x: window.bounds.midX, y: window.bounds.maxY - 60, width: 0, height: 0)
+            popover.permittedArrowDirections = []
+        }
+        guard let root = UIApplication.shared.keyForegroundWindow?.rootViewController else { return }
+        root.topmostPresentedViewController.present(av, animated: true)
     }
 
     @ViewBuilder

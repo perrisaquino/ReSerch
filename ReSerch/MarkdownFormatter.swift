@@ -31,6 +31,7 @@ enum MarkdownFormatter {
         if let l = result.likeCount { lines += ["likes: \(l)"] }
         if let c = result.commentCount { lines += ["comments: \(c)"] }
         if let s = result.shareCount { lines += ["shares: \(s)"] }
+        if let sv = result.saveCount { lines += ["saves: \(sv)"] }
         lines += ["---", ""]
 
         // Header
@@ -51,18 +52,24 @@ enum MarkdownFormatter {
         if let posted = postedStr { metaParts += ["**Posted:** \(posted)"] }
         if let dur = result.duration { metaParts += ["**Duration:** \(dur)"] }
 
+        // Stats line is fixed-order across every platform: views · likes · comments · shares · saves.
+        // Missing fields are omitted (no fake zeros). TikTok exposes all five; Instagram and
+        // YouTube don't expose `saves` publicly so theirs always max at four.
         var statParts: [String] = []
-        if let v = result.viewCount { statParts += ["\(formatCount(v)) views"] }
-        if let l = result.likeCount { statParts += ["\(formatCount(l)) likes"] }
+        if let v = result.viewCount    { statParts += ["\(formatCount(v)) views"] }
+        if let l = result.likeCount    { statParts += ["\(formatCount(l)) likes"] }
         if let c = result.commentCount { statParts += ["\(formatCount(c)) comments"] }
-        if let s = result.shareCount { statParts += ["\(formatCount(s)) shares"] }
+        if let s = result.shareCount   { statParts += ["\(formatCount(s)) shares"] }
+        if let sv = result.saveCount   { statParts += ["\(formatCount(sv)) saves"] }
         if !statParts.isEmpty { metaParts += ["**Stats:** " + statParts.joined(separator: " · ")] }
 
         if result.url.isEmpty {
             // Local-file imports have no source URL to link to.
             metaParts += ["**Source:** Imported file"]
         } else {
-            metaParts += ["**Source:** [View Original](\(result.url))"]
+            // Hyperlinked label that names what kind of post it is — readers in Obsidian
+            // see e.g. "Instagram carousel post" as the link text, not generic "View Original".
+            metaParts += ["**Source:** [\(sourceLabel(for: result))](\(result.url))"]
         }
         if let url = creatorURL {
             let creatorLabel = handle.isEmpty ? result.author : handle
@@ -126,6 +133,29 @@ enum MarkdownFormatter {
             output.replaceCharacters(in: ins.range, with: replacement)
         }
         return output as String
+    }
+
+    /// Human-readable label describing the source post — used as the hyperlink text
+    /// for `**Source:**`. Branches on platform + whether the result has carousel slides
+    /// so the export reads as "Instagram carousel post" / "TikTok video" / "YouTube Short"
+    /// instead of a generic "View Original".
+    private static func sourceLabel(for result: TranscriptResult) -> String {
+        let isCarousel = (result.carouselSlides?.isEmpty == false)
+        let platform = result.platform.lowercased()
+        let url = result.url.lowercased()
+
+        if platform.hasPrefix("instagram") {
+            return isCarousel ? "Instagram carousel post" : "Instagram post"
+        }
+        if platform.hasPrefix("tiktok") {
+            return isCarousel ? "TikTok photo carousel" : "TikTok video"
+        }
+        if platform.hasPrefix("youtube") {
+            return url.contains("/shorts/") ? "YouTube Short" : "YouTube video"
+        }
+        if platform.hasPrefix("threads")   { return "Threads post" }
+        if platform.hasPrefix("twitter") || platform.hasPrefix("x") { return "X post" }
+        return "View original"
     }
 
     private static func profileURL(for result: TranscriptResult) -> String? {
