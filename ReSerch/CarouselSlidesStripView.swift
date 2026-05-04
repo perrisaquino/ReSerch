@@ -63,17 +63,17 @@ struct CarouselSlidesStripView: View {
         if let url = slide.displayURL {
             CachedAsyncImage(url: url) { image in
                 if let image {
-                    // .scaledToFill + .clipped: the parent TabView is locked to a
-                    // 4:5 aspect ratio, so each image fills that box and any portion
-                    // of the natural aspect that doesn't match gets clipped. This is
-                    // visually closer to Instagram's behavior and — critically — it
-                    // means the image always paints from edge to edge with no
-                    // letterboxing that could read as "image is loading still".
+                    // .scaledToFit means slides whose natural aspect doesn't match
+                    // the locked 4:5 container letterbox with black bars (top/bottom
+                    // for square slides, left/right for 9:16 slides). The container's
+                    // black background makes those bars invisible. Result: every slide
+                    // shows in full, no cropping. The page-snap fix from the aspect
+                    // lock above is preserved because the container height is still
+                    // constant per slide.
                     image
                         .resizable()
-                        .scaledToFill()
+                        .scaledToFit()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipped()
                 } else {
                     placeholder
                 }
