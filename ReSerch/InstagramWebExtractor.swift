@@ -110,11 +110,13 @@ final class InstagramWebExtractor: NSObject {
                 if let data = body["data"] as? [String: Any] {
                     apiJSON = data
                     rLog(.ok, step: "Instagram/JS", "API JSON received (\(data.count) top-level keys)")
-                    // Carousel detection: if the post is a sidecar (with or without video children),
-                    // resolve immediately with a CarouselPayload. The video pollers/timers are torn
-                    // down by the existing resolve() cleanup path.
+                    // OCR-eligible detection: covers multi-image carousels, mixed
+                    // carousels with video children, AND single-image posts with text
+                    // overlays (Instagram lets users post a meme/quote as a single
+                    // photo — those need OCR routing, not video extraction). The video
+                    // pollers/timers are torn down by the existing resolve() cleanup path.
                     let kind = InstagramCarouselExtractor.detectKind(from: data)
-                    if kind == .carousel || kind == .mixedCarousel {
+                    if InstagramCarouselExtractor.isOCREligible(kind) {
                         let postURL = webView?.url ?? startURL
                         if let postURL,
                            let payload = try? InstagramCarouselExtractor.parse(json: data, postURL: postURL) {

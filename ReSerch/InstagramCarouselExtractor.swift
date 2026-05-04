@@ -15,9 +15,16 @@ import Foundation
 enum InstagramCarouselExtractor {
 
     enum Kind: Equatable {
-        case carousel
-        case mixedCarousel
-        case notCarousel
+        case carousel       // multi-image sidecar
+        case mixedCarousel  // sidecar with at least one video child
+        case singlePhoto    // single-image post (no sidecar). OCR-eligible too.
+        case notCarousel    // single video — let the video extractor handle it
+    }
+
+    /// Returns true for any kind that should route through the carousel/OCR pipeline
+    /// instead of the video extractor. Single photos and carousels both qualify.
+    static func isOCREligible(_ kind: Kind) -> Bool {
+        kind == .carousel || kind == .mixedCarousel || kind == .singlePhoto
     }
 
     enum ParseError: Error {
@@ -47,25 +54,31 @@ enum InstagramCarouselExtractor {
     // MARK: - Modern shape (items[0].carousel_media)
 
     /// Returns nil if the JSON isn't in modern shape (caller should try legacy).
-    /// Returns .notCarousel if it IS modern shape but the post is a single image/video.
     private static func detectModern(from json: [String: Any]) -> Kind? {
         guard let item = unwrapItem(json) else { return nil }
-        // media_type 8 = carousel album. carousel_media must also be present.
-        guard (item["media_type"] as? Int) == 8 else { return nil }
-        guard let media = item["carousel_media"] as? [[String: Any]], !media.isEmpty else {
-            return .notCarousel
+        let mediaType = item["media_type"] as? Int
+        // media_type 1 = single image, 2 = single video, 8 = carousel album
+        switch mediaType {
+        case 8:
+            // Carousel — empty children should never happen but treat as not-carousel.
+            guard let media = item["carousel_media"] as? [[String: Any]], !media.isEmpty else {
+                return .notCarousel
+            }
+            let hasVideo = media.contains { ($0["media_type"] as? Int) == 2 }
+            return hasVideo ? .mixedCarousel : .carousel
+        case 1:
+            // Single image post (e.g. a meme with text on it). OCR-eligible.
+            // Verify there's an actual image URL we can fetch before claiming this kind.
+            return imageURLModern(from: item) != nil ? .singlePhoto : .notCarousel
+        default:
+            return nil  // includes media_type == 2 (single video) — video extractor handles it
         }
-        let hasVideo = media.contains { ($0["media_type"] as? Int) == 2 }
-        return hasVideo ? .mixedCarousel : .carousel
     }
 
     private static func parseModern(json: [String: Any], postURL: URL) throws -> CarouselPayload {
-        guard let item = unwrapItem(json),
-              (item["media_type"] as? Int) == 8,
-              let media = item["carousel_media"] as? [[String: Any]],
-              !media.isEmpty else {
-            throw ParseError.notASidecar
-        }
+        guard let item = unwrapItem(json) else { throw ParseError.notASidecar }
+        let mediaType = item["media_type"] as? Int
+        guard mediaType == 8 || mediaType == 1 else { throw ParseError.notASidecar }
 
         guard let user = item["user"] as? [String: Any],
               let handle = user["username"] as? String,
@@ -85,12 +98,22 @@ enum InstagramCarouselExtractor {
         let postedDate = postedTs.map { Date(timeIntervalSince1970: $0) }
 
         var slides: [CarouselSlide] = []
-        for (i, node) in media.enumerated() {
-            // Only image slides go to OCR. Video slides in mixed carousels are skipped here;
-            // the parent caller surfaces `mixedCarouselHasVideo` for messaging.
-            guard (node["media_type"] as? Int) != 2 else { continue }
-            guard let url = imageURLModern(from: node) else { continue }
-            slides.append(CarouselSlide(index: i, imageURL: url))
+        if mediaType == 1 {
+            // Single-image post — the image lives directly on the item.
+            guard let url = imageURLModern(from: item) else { throw ParseError.noChildren }
+            slides.append(CarouselSlide(index: 0, imageURL: url))
+        } else {
+            // Carousel album — iterate carousel_media[].
+            guard let media = item["carousel_media"] as? [[String: Any]], !media.isEmpty else {
+                throw ParseError.noChildren
+            }
+            for (i, node) in media.enumerated() {
+                // Only image slides go to OCR. Video slides in mixed carousels are skipped;
+                // the parent caller surfaces `mixedCarouselHasVideo` for messaging.
+                guard (node["media_type"] as? Int) != 2 else { continue }
+                guard let url = imageURLModern(from: node) else { continue }
+                slides.append(CarouselSlide(index: i, imageURL: url))
+            }
         }
         guard !slides.isEmpty else { throw ParseError.noChildren }
 
@@ -127,17 +150,26 @@ enum InstagramCarouselExtractor {
 
     private static func detectLegacy(from json: [String: Any]) -> Kind {
         let edges = sidecarEdges(json)
-        guard !edges.isEmpty else { return .notCarousel }
-        let hasVideo = edges.contains { node in
-            (node["is_video"] as? Bool == true)
-                || (node["__typename"] as? String == "GraphVideo")
+        if !edges.isEmpty {
+            let hasVideo = edges.contains { node in
+                (node["is_video"] as? Bool == true)
+                    || (node["__typename"] as? String == "GraphVideo")
+            }
+            return hasVideo ? .mixedCarousel : .carousel
         }
-        return hasVideo ? .mixedCarousel : .carousel
+        // No sidecar — could be a single image post (OCR-eligible) or a single video
+        // (let the video extractor handle it). __typename "GraphImage" + a display_url
+        // is the legacy signature for "this is a single photo, not a video."
+        let typename = json["__typename"] as? String
+        let isVideo = (json["is_video"] as? Bool == true) || typename == "GraphVideo"
+        if !isVideo, imageURLLegacy(from: json) != nil {
+            return .singlePhoto
+        }
+        return .notCarousel
     }
 
     private static func parseLegacy(json: [String: Any], postURL: URL) throws -> CarouselPayload {
         let edges = sidecarEdges(json)
-        guard !edges.isEmpty else { throw ParseError.notASidecar }
 
         guard let owner = json["owner"] as? [String: Any],
               let handle = owner["username"] as? String,
@@ -157,9 +189,16 @@ enum InstagramCarouselExtractor {
         let postedDate = postedTs.map { Date(timeIntervalSince1970: $0) }
 
         var slides: [CarouselSlide] = []
-        for (i, node) in edges.enumerated() {
-            guard let imageURL = imageURLLegacy(from: node) else { continue }
-            slides.append(CarouselSlide(index: i, imageURL: imageURL))
+        if !edges.isEmpty {
+            // Multi-image sidecar.
+            for (i, node) in edges.enumerated() {
+                guard let imageURL = imageURLLegacy(from: node) else { continue }
+                slides.append(CarouselSlide(index: i, imageURL: imageURL))
+            }
+        } else {
+            // Single-image post — image URL lives at the root, not inside an edges array.
+            guard let url = imageURLLegacy(from: json) else { throw ParseError.noChildren }
+            slides.append(CarouselSlide(index: 0, imageURL: url))
         }
         guard !slides.isEmpty else { throw ParseError.noChildren }
 
