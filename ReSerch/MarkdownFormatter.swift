@@ -158,15 +158,22 @@ enum MarkdownFormatter {
     /// so the export reads as "Instagram carousel post" / "TikTok video" / "YouTube Short"
     /// instead of a generic "View Original".
     private static func sourceLabel(for result: TranscriptResult) -> String {
-        let isCarousel = (result.carouselSlides?.isEmpty == false)
+        // Multi-slide posts only — a single-slide "carousel" (one image) is just a
+        // regular photo post and should label that way, not as a carousel.
+        let isMultiSlideCarousel = (result.carouselSlides?.count ?? 0) > 1
+        let isSingleSlidePhoto   = (result.carouselSlides?.count ?? 0) == 1
         let platform = result.platform.lowercased()
         let url = result.url.lowercased()
 
         if platform.hasPrefix("instagram") {
-            return isCarousel ? "Instagram carousel post" : "Instagram post"
+            if isMultiSlideCarousel { return "Instagram carousel post" }
+            if isSingleSlidePhoto   { return "Instagram photo post" }
+            return "Instagram post"
         }
         if platform.hasPrefix("tiktok") {
-            return isCarousel ? "TikTok photo carousel" : "TikTok video"
+            if isMultiSlideCarousel { return "TikTok photo carousel" }
+            if isSingleSlidePhoto   { return "TikTok photo post" }
+            return "TikTok video"
         }
         if platform.hasPrefix("youtube") {
             return url.contains("/shorts/") ? "YouTube Short" : "YouTube video"
