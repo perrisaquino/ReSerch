@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		14D38715A88F9256560645EB /* SharedURLQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83882C3C660582A4605C568D /* SharedURLQueue.swift */; };
 		1A0EE0AA32FAFD8961936859 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 402EBB165D92D75B210883E8 /* Foundation.framework */; };
 		22726D92515C59DF14912D7B /* ReSerchShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 01EF0BF90F25C4138B6C9EA7 /* ReSerchShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C6BD6EB7570C3EC3DCA29E25 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF80E87BB3994EBCC8FB85EB /* ShareViewController.swift */; };
@@ -56,6 +57,7 @@
 		01EF0BF90F25C4138B6C9EA7 /* ReSerchShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ReSerchShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		389E135F2E248BD776468103 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		402EBB165D92D75B210883E8 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		83882C3C660582A4605C568D /* SharedURLQueue.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SharedURLQueue.swift; path = ../ReSerch/SharedURLQueue.swift; sourceTree = "<group>"; };
 		CBCE89EB2F8729DF00569DCD /* ReSerch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ReSerch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CBCE89FD2F8729E200569DCD /* ReSerchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ReSerchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CBCE8A072F8729E200569DCD /* ReSerchUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ReSerchUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -65,16 +67,22 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		CBCE89ED2F8729DF00569DCD /* ReSerch */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = ReSerch;
 			sourceTree = "<group>";
 		};
 		CBCE8A002F8729E200569DCD /* ReSerchTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = ReSerchTests;
 			sourceTree = "<group>";
 		};
 		CBCE8A0A2F8729E200569DCD /* ReSerchUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = ReSerchUITests;
 			sourceTree = "<group>";
 		};
@@ -120,6 +128,7 @@
 			children = (
 				EF80E87BB3994EBCC8FB85EB /* ShareViewController.swift */,
 				389E135F2E248BD776468103 /* Info.plist */,
+				83882C3C660582A4605C568D /* SharedURLQueue.swift */,
 			);
 			path = ReSerchShareExtension;
 			sourceTree = SOURCE_ROOT;
@@ -337,6 +346,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C6BD6EB7570C3EC3DCA29E25 /* ShareViewController.swift in Sources */,
+				14D38715A88F9256560645EB /* SharedURLQueue.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -387,6 +397,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = ReSerchShareExtension/ReSerchShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = YXHDV9THFC;
@@ -414,6 +425,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = ReSerchShareExtension/ReSerchShareExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = YXHDV9THFC;

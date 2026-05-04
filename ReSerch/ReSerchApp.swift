@@ -39,10 +39,33 @@ struct ReSerchApp: App {
                 }
         }
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .background || newPhase == .inactive {
+            switch newPhase {
+            case .active:
+                drainSharedQueueIfNeeded()
+            case .background, .inactive:
                 vm.saveHistory()
                 vm.saveNotebooks()
                 UIApplication.shared.ignoreSnapshotOnNextApplicationLaunch()
+            @unknown default:
+                break
+            }
+        }
+    }
+
+    /// Pulls every URL the share extension has accumulated since the last foreground
+    /// pass and dispatches them to the appropriate fetch path. Called every time the
+    /// app activates, so user can share-share-share-share-share from another app and
+    /// get all five queued transcriptions kicked off the moment they next open ReSerch.
+    private func drainSharedQueueIfNeeded() {
+        let urls = SharedURLQueue.drain()
+        guard !urls.isEmpty else { return }
+        print("[ReSerch] Draining shared queue — \(urls.count) URL(s)")
+        Task { @MainActor in
+            if urls.count == 1, let only = urls.first {
+                vm.urlInput = only
+                await vm.fetchTranscript()
+            } else {
+                await vm.fetchBatch(urls: urls, playlistName: nil)
             }
         }
     }

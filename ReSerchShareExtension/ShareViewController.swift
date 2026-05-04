@@ -38,6 +38,19 @@ final class ShareViewController: UIViewController {
             cancelExtension()
             return
         }
+
+        // Preferred path: write the URL to the App Group queue and exit silently.
+        // The host app drains the queue when it next foregrounds. This is what
+        // enables "share five posts in a row without leaving TikTok" — the user
+        // never gets pulled into ReSerch mid-scroll.
+        if SharedURLQueue.enqueue(url.absoluteString) {
+            completeExtension()
+            return
+        }
+
+        // Fallback: App Group entitlement isn't installed yet (or the suite is
+        // misconfigured). Use the deeplink handoff so transcription still works
+        // — the host app launches and processes this single URL via onOpenURL.
         guard let deepLink = makeDeepLink(for: url) else {
             cancelExtension()
             return
