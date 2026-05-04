@@ -7,11 +7,21 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1A0EE0AA32FAFD8961936859 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 402EBB165D92D75B210883E8 /* Foundation.framework */; };
+		22726D92515C59DF14912D7B /* ReSerchShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 01EF0BF90F25C4138B6C9EA7 /* ReSerchShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		C6BD6EB7570C3EC3DCA29E25 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF80E87BB3994EBCC8FB85EB /* ShareViewController.swift */; };
 		CBAA1111000000000000AAA3 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = CBAA1111000000000000AAA2 /* WhisperKit */; };
 		CBAA2222000000000000BBB3 /* YouTubeKit in Frameworks */ = {isa = PBXBuildFile; productRef = CBAA2222000000000000BBB2 /* YouTubeKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		54BF4E04C1B3F33650054037 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = CBCE89E32F8729DF00569DCD /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 184890B1C9EFE8F13665C709;
+			remoteInfo = ReSerchShareExtension;
+		};
 		CBCE89FE2F8729E200569DCD /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = CBCE89E32F8729DF00569DCD /* Project object */;
@@ -28,31 +38,63 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		3BD037E14C14B4876E6F5155 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				22726D92515C59DF14912D7B /* ReSerchShareExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		01EF0BF90F25C4138B6C9EA7 /* ReSerchShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ReSerchShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		389E135F2E248BD776468103 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		402EBB165D92D75B210883E8 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		CBCE89EB2F8729DF00569DCD /* ReSerch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ReSerch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CBCE89FD2F8729E200569DCD /* ReSerchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ReSerchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CBCE8A072F8729E200569DCD /* ReSerchUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ReSerchUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		EF80E87BB3994EBCC8FB85EB /* ShareViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		CBCE89ED2F8729DF00569DCD /* ReSerch */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = ReSerch;
 			sourceTree = "<group>";
 		};
 		CBCE8A002F8729E200569DCD /* ReSerchTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = ReSerchTests;
 			sourceTree = "<group>";
 		};
 		CBCE8A0A2F8729E200569DCD /* ReSerchUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
 			path = ReSerchUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		6848419A457CCC3D570131CF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A0EE0AA32FAFD8961936859 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		CBCE89E82F8729DF00569DCD /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -79,6 +121,32 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		4B3B20D4CEDF26EE4440404C /* ReSerchShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				EF80E87BB3994EBCC8FB85EB /* ShareViewController.swift */,
+				389E135F2E248BD776468103 /* Info.plist */,
+			);
+			name = ReSerchShareExtension;
+			path = ReSerchShareExtension;
+			sourceTree = SOURCE_ROOT;
+		};
+		5612E7AF66B641F169C1D8A2 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				708D14301E5CB81A2D6CA118 /* iOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		708D14301E5CB81A2D6CA118 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				402EBB165D92D75B210883E8 /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
 		CBCE89E22F8729DF00569DCD = {
 			isa = PBXGroup;
 			children = (
@@ -86,6 +154,8 @@
 				CBCE8A002F8729E200569DCD /* ReSerchTests */,
 				CBCE8A0A2F8729E200569DCD /* ReSerchUITests */,
 				CBCE89EC2F8729DF00569DCD /* Products */,
+				5612E7AF66B641F169C1D8A2 /* Frameworks */,
+				4B3B20D4CEDF26EE4440404C /* ReSerchShareExtension */,
 			);
 			sourceTree = "<group>";
 		};
@@ -95,6 +165,7 @@
 				CBCE89EB2F8729DF00569DCD /* ReSerch.app */,
 				CBCE89FD2F8729E200569DCD /* ReSerchTests.xctest */,
 				CBCE8A072F8729E200569DCD /* ReSerchUITests.xctest */,
+				01EF0BF90F25C4138B6C9EA7 /* ReSerchShareExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -102,6 +173,23 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		184890B1C9EFE8F13665C709 /* ReSerchShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 20CE668A8434B93E19A90270 /* Build configuration list for PBXNativeTarget "ReSerchShareExtension" */;
+			buildPhases = (
+				467CBA0AD7368DBCC9528641 /* Sources */,
+				6848419A457CCC3D570131CF /* Frameworks */,
+				4EBF1C63CD51FF7C53C0C7B2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ReSerchShareExtension;
+			productName = ReSerchShareExtension;
+			productReference = 01EF0BF90F25C4138B6C9EA7 /* ReSerchShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		CBCE89EA2F8729DF00569DCD /* ReSerch */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = CBCE8A112F8729E200569DCD /* Build configuration list for PBXNativeTarget "ReSerch" */;
@@ -109,10 +197,12 @@
 				CBCE89E72F8729DF00569DCD /* Sources */,
 				CBCE89E82F8729DF00569DCD /* Frameworks */,
 				CBCE89E92F8729DF00569DCD /* Resources */,
+				3BD037E14C14B4876E6F5155 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A256B467BD9D612BD693F654 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				CBCE89ED2F8729DF00569DCD /* ReSerch */,
@@ -143,8 +233,6 @@
 				CBCE8A002F8729E200569DCD /* ReSerchTests */,
 			);
 			name = ReSerchTests;
-			packageProductDependencies = (
-			);
 			productName = ReSerchTests;
 			productReference = CBCE89FD2F8729E200569DCD /* ReSerchTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
@@ -166,8 +254,6 @@
 				CBCE8A0A2F8729E200569DCD /* ReSerchUITests */,
 			);
 			name = ReSerchUITests;
-			packageProductDependencies = (
-			);
 			productName = ReSerchUITests;
 			productReference = CBCE8A072F8729E200569DCD /* ReSerchUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
@@ -216,11 +302,19 @@
 				CBCE89EA2F8729DF00569DCD /* ReSerch */,
 				CBCE89FC2F8729E200569DCD /* ReSerchTests */,
 				CBCE8A062F8729E200569DCD /* ReSerchUITests */,
+				184890B1C9EFE8F13665C709 /* ReSerchShareExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		4EBF1C63CD51FF7C53C0C7B2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		CBCE89E92F8729DF00569DCD /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -245,6 +339,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		467CBA0AD7368DBCC9528641 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C6BD6EB7570C3EC3DCA29E25 /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		CBCE89E72F8729DF00569DCD /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -269,6 +371,12 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		A256B467BD9D612BD693F654 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = ReSerchShareExtension;
+			target = 184890B1C9EFE8F13665C709 /* ReSerchShareExtension */;
+			targetProxy = 54BF4E04C1B3F33650054037 /* PBXContainerItemProxy */;
+		};
 		CBCE89FF2F8729E200569DCD /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = CBCE89EA2F8729DF00569DCD /* ReSerch */;
@@ -282,6 +390,61 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		36162C5CC6F30DE5C0C344C2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = YXHDV9THFC;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ReSerchShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.perrisaquino.reserch.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		C03D5E4271EAA33AA0AB11BD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = YXHDV9THFC;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ReSerchShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.perrisaquino.reserch.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 		CBCE8A0F2F8729E200569DCD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -414,6 +577,7 @@
 				DEVELOPMENT_TEAM = YXHDV9THFC;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleURLTypes = "(\n  {\n    CFBundleURLName = \"com.perrisaquino.reserch.transcribe\";\n    CFBundleURLSchemes = (\"reserch\");\n    CFBundleTypeRole = Editor;\n  }\n)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "ReSerch saves the original video to your Photos library when you transcribe TikTok or Instagram links, so you can keep the source alongside the transcript.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -453,6 +617,7 @@
 				DEVELOPMENT_TEAM = YXHDV9THFC;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleURLTypes = "(\n  {\n    CFBundleURLName = \"com.perrisaquino.reserch.transcribe\";\n    CFBundleURLSchemes = (\"reserch\");\n    CFBundleTypeRole = Editor;\n  }\n)";
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "ReSerch saves the original video to your Photos library when you transcribe TikTok or Instagram links, so you can keep the source alongside the transcript.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -576,6 +741,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		20CE668A8434B93E19A90270 /* Build configuration list for PBXNativeTarget "ReSerchShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C03D5E4271EAA33AA0AB11BD /* Release */,
+				36162C5CC6F30DE5C0C344C2 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		CBCE89E62F8729DF00569DCD /* Build configuration list for PBXProject "ReSerch" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
