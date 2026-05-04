@@ -81,14 +81,23 @@ final class CarouselOCRService {
     }
 
     /// Returns concatenated recognized text. Empty string if Vision found nothing.
-    /// Nil if Vision errored.
+    /// Nil if Vision errored or the timeout fired before any text came back.
+    ///
+    /// Three concurrent paths can complete this OCR call: the Vision callback (success
+    /// or cancellation surfaces here), the `perform()` throw path (when the request
+    /// can't even start), and the 10s timeout. Without idempotent resume the
+    /// `CheckedContinuation` would be resumed twice on cancellation paths and Apple's
+    /// runtime would `fatalError(SWIFT TASK CONTINUATION MISUSE)`. The `ResumeOnce`
+    /// box below is locked so only the first path wins; subsequent attempts no-op.
     private static func runOCR(on image: UIImage) async -> String? {
         guard let cgImage = image.cgImage else { return nil }
         return await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
+            let resumer = ResumeOnce(continuation: cont)
+
             let request = VNRecognizeTextRequest { req, _ in
                 let observations = (req.results as? [VNRecognizedTextObservation]) ?? []
                 let lines = observations.compactMap { $0.topCandidates(1).first?.string }
-                cont.resume(returning: lines.joined(separator: "\n"))
+                resumer.resume(with: lines.joined(separator: "\n"))
             }
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
@@ -97,19 +106,48 @@ final class CarouselOCRService {
             let cancelTask = Task.detached {
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
                 request.cancel()
+                // Belt-and-suspenders: if the Vision callback doesn't fire after cancel(),
+                // we still need to unblock the continuation. ResumeOnce makes this safe.
+                resumer.resume(with: nil)
             }
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     try handler.perform([request])
                 } catch {
-                    cont.resume(returning: nil)
+                    resumer.resume(with: nil)
                 }
                 cancelTask.cancel()
             }
         }
     }
+}
 
-    private func postSlug(for url: URL) -> String {
+/// Lock-protected single-use continuation resumer. Used wherever multiple concurrent
+/// paths might all try to resume the same `CheckedContinuation` (e.g. callback + throw +
+/// timeout). The first resume wins; subsequent calls no-op silently.
+///
+/// `@unchecked Sendable` because we manage thread safety manually with the NSLock.
+private final class ResumeOnce<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResume = false
+    private let continuation: CheckedContinuation<T, Never>
+
+    init(continuation: CheckedContinuation<T, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(with value: T) {
+        lock.lock()
+        let alreadyResumed = didResume
+        didResume = true
+        lock.unlock()
+        guard !alreadyResumed else { return }
+        continuation.resume(returning: value)
+    }
+}
+
+extension CarouselOCRService {
+    fileprivate func postSlug(for url: URL) -> String {
         let parts = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
         let raw = parts.last ?? "carousel"
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
