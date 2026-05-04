@@ -15,32 +15,44 @@ struct CarouselCleanTranscriptView: View {
     let slides: [TranscriptCarouselSlide]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            ForEach(slides) { slide in
-                slideBlock(slide)
+        if slides.isEmpty {
+            // Defensive fallback: should never hit because TranscriptDetailView's
+            // isCarouselTranscript already guards against empty arrays, but keep a
+            // visible message so a stray bug surfaces as a clear "nothing here" rather
+            // than a layout-breaking blank section.
+            Text("No slide content available.")
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.45))
+                .italic()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 22) {
+                ForEach(slides) { slide in
+                    slideBlock(slide)
+                }
             }
         }
     }
 
     @ViewBuilder
     private func slideBlock(_ slide: TranscriptCarouselSlide) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("Slide \(slide.index + 1)")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .textCase(.uppercase)
-                    .tracking(0.4)
-                Capsule()
-                    .fill(Color.white.opacity(0.10))
-                    .frame(height: 1)
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            // Header recipe matches captionSection / transcriptSection / documentNoteSection
+            // in TranscriptDetailView. Same .caption + semibold + .gray + uppercase. No
+            // tracking, no divider — both were drift from the established pattern.
+            Text("Slide \(slide.index + 1)")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.gray)
+                .textCase(.uppercase)
 
+            // Body recipe matches documentNoteSection (.font(.system(size: 15)),
+            // .foregroundStyle(.white.opacity(0.85)), .textSelection(.enabled)).
+            // No explicit lineSpacing — let SwiftUI handle line height per platform.
             if let cleaned = readableText(from: slide.recognizedText) {
                 Text(cleaned)
-                    .font(.system(size: 16))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .lineSpacing(4)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.85))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {

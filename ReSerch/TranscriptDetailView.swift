@@ -154,10 +154,13 @@ struct TranscriptDetailView: View {
                         .background(Color.black)
                     dragHandle
                 } else if isCarouselTranscript, let slides = entry.result.carouselSlides {
-                    // Carousel posts: replace the static thumbnail with a swipeable strip
-                    // that recreates the original platform's pagination experience.
+                    // Carousel posts: swipeable strip in place of the static thumbnail.
+                    // Bound to the same `videoHeight` state video players use so the
+                    // dragHandle below resizes the carousel exactly the way it resizes
+                    // a YouTube / TikTok player — single consistent gesture.
                     CarouselSlidesStripView(slides: slides)
-                        .frame(height: 380)
+                        .frame(height: videoHeight)
+                        .background(Color.black)
                     dragHandle
                 }
 
