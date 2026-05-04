@@ -32,7 +32,7 @@ struct CarouselSlidesStripView: View {
     private var tabView: some View {
         TabView(selection: $currentIndex) {
             ForEach(slides) { slide in
-                slideContent(for: slide)
+                slideImage(for: slide)
                     .tag(slide.index)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Slide \(slide.index + 1) of \(slides.count)")
@@ -40,21 +40,13 @@ struct CarouselSlidesStripView: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
-        // Reduced motion: suppress the spring transition between pages. Apple flags this
-        // as a HIGH-severity accessibility concern — vestibular triggers happen here.
-        .animation(reduceMotion ? nil : .default, value: currentIndex)
-    }
-
-    /// Lazy-render gate: only the current slide and its immediate neighbors instantiate
-    /// AsyncImage. Off-screen slides render the placeholder until adjacent. Keeps a
-    /// 20-slide carousel from firing 20 simultaneous downloads on first appear.
-    @ViewBuilder
-    private func slideContent(for slide: TranscriptCarouselSlide) -> some View {
-        if abs(slide.index - currentIndex) <= 1 {
-            slideImage(for: slide)
-        } else {
-            placeholder
-        }
+        // No external `.animation(value: currentIndex)` — TabView(.page) has its own
+        // spring physics on the swipe gesture. Adding one here re-animates the value
+        // the gesture just settled, causing mid-drag stutter and pages landing
+        // partially-snapped between slides. Reduced-motion accessibility is honored
+        // by the system at the page-style level (TabView respects it internally).
+        // We keep the conditional dot-tap animation in `dotButton(for:)` for
+        // explicit page jumps where there's no concurrent gesture.
     }
 
     @ViewBuilder
@@ -107,7 +99,7 @@ struct CarouselSlidesStripView: View {
     @ViewBuilder
     private var dotsRow: some View {
         if slides.count <= Self.maxVisibleDots {
-            HStack(spacing: 4) {
+            HStack(spacing: 3) {
                 ForEach(slides) { slide in
                     dotButton(for: slide.index)
                 }
@@ -123,14 +115,14 @@ struct CarouselSlidesStripView: View {
     /// last 3 dots. Order is rebuilt around `currentIndex` so the active dot is always
     /// visible regardless of carousel length.
     private var collapsedDotsRow: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             ForEach(visibleDotIndexes, id: \.self) { idx in
                 if idx < 0 {
                     // Sentinel for ellipsis — sized to match dots so spacing stays uniform
                     Circle()
                         .fill(Color.white.opacity(0.30))
                         .frame(width: 3, height: 3)
-                        .frame(width: 12, height: 28)
+                        .frame(width: 10, height: 28)
                 } else {
                     dotButton(for: idx)
                 }
@@ -167,7 +159,7 @@ struct CarouselSlidesStripView: View {
             Circle()
                 .fill(isActive ? Color.white : Color.white.opacity(0.35))
                 .frame(width: 6, height: 6)
-                .frame(width: 22, height: 28)         // tight hit area keeps dots visually grouped
+                .frame(width: 14, height: 28)         // tight hit area keeps dots visually grouped
                 .contentShape(Rectangle())
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isActive)
         }
