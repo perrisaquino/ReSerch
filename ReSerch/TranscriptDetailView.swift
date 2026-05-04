@@ -88,6 +88,11 @@ struct TranscriptDetailView: View {
                     entry.documentNote = newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : newText
                     vm.setDocumentNote(entry, to: newText)
                 }
+                // Half-sheet at first, draggable up to full. Keeps the transcript /
+                // video context visible behind the editor so the user can write
+                // grounded notes without losing the source material on screen.
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             .onChange(of: isEditing) { _, editing in
                 if editing {
@@ -677,18 +682,32 @@ struct TranscriptDetailView: View {
         return "\(n)"
     }
 
-    // Constructs a profile URL from handle + platform
+    // Constructs a profile URL from handle + platform.
+    // Carousel results store platform as `"Instagram (Carousel)"` / `"TikTok (Photos)"`
+    // — substring-match against the lowercased value so those map correctly to
+    // their respective profile URLs alongside the plain video platforms.
     private var profileURL: URL? {
         let handle = entry.result.handle
             .trimmingCharacters(in: .whitespaces)
             .replacingOccurrences(of: "@", with: "")
         guard !handle.isEmpty else { return nil }
-        switch entry.result.platform.lowercased() {
-        case "youtube":   return URL(string: "https://www.youtube.com/@\(handle)")
-        case "tiktok":    return URL(string: "https://www.tiktok.com/@\(handle)")
-        case "instagram": return URL(string: "https://www.instagram.com/\(handle)")
-        default:          return nil
+        let p = entry.result.platform.lowercased()
+        if p.contains("youtube") {
+            return URL(string: "https://www.youtube.com/@\(handle)")
         }
+        if p.contains("tiktok") {
+            return URL(string: "https://www.tiktok.com/@\(handle)")
+        }
+        if p.contains("instagram") {
+            return URL(string: "https://www.instagram.com/\(handle)")
+        }
+        if p.contains("threads") {
+            return URL(string: "https://www.threads.net/@\(handle)")
+        }
+        if p.contains("twitter") || p.contains("x.com") {
+            return URL(string: "https://x.com/\(handle)")
+        }
+        return nil
     }
 }
 

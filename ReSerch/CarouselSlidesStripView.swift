@@ -21,6 +21,14 @@ struct CarouselSlidesStripView: View {
     /// When more than this, we render leading + trailing dots and an ellipsis.
     private static let maxVisibleDots = 10
 
+    /// Instagram's canonical portrait carousel ratio is 4:5 (1080×1350). Locking the
+    /// strip to this aspect keeps the TabView's container height constant across
+    /// slides. Without it, slides with different intrinsic ratios reflow the TabView
+    /// height during a swipe — that vertical layout-shift mid-drag is the visible
+    /// "glitch" / "doesn't land cleanly" symptom users see, even though the page-snap
+    /// physics themselves are correct.
+    private static let stripAspectRatio: CGFloat = 4.0 / 5.0
+
     var body: some View {
         VStack(spacing: 6) {
             tabView
@@ -40,27 +48,32 @@ struct CarouselSlidesStripView: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
+        // Fixed aspect ratio on the TabView itself — every page now occupies an
+        // identical height, so swiping between slides of different intrinsic
+        // dimensions doesn't trigger a vertical reflow mid-drag.
+        .aspectRatio(Self.stripAspectRatio, contentMode: .fit)
         // No external `.animation(value: currentIndex)` — TabView(.page) has its own
         // spring physics on the swipe gesture. Adding one here re-animates the value
-        // the gesture just settled, causing mid-drag stutter and pages landing
-        // partially-snapped between slides. Reduced-motion accessibility is honored
-        // by the system at the page-style level (TabView respects it internally).
-        // We keep the conditional dot-tap animation in `dotButton(for:)` for
-        // explicit page jumps where there's no concurrent gesture.
+        // the gesture just settled, causing mid-drag stutter. The aspect-ratio lock
+        // above is the OTHER half of the fix; both are required.
     }
 
     @ViewBuilder
     private func slideImage(for slide: TranscriptCarouselSlide) -> some View {
         if let url = slide.displayURL {
-            // CachedAsyncImage's L1 memory cache makes re-renders (caused by the
-            // lazy-render gate above) zero-cost — no re-downloads when swiping
-            // back to a slide we've already seen.
             CachedAsyncImage(url: url) { image in
                 if let image {
+                    // .scaledToFill + .clipped: the parent TabView is locked to a
+                    // 4:5 aspect ratio, so each image fills that box and any portion
+                    // of the natural aspect that doesn't match gets clipped. This is
+                    // visually closer to Instagram's behavior and — critically — it
+                    // means the image always paints from edge to edge with no
+                    // letterboxing that could read as "image is loading still".
                     image
                         .resizable()
-                        .scaledToFit()
+                        .scaledToFill()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
                 } else {
                     placeholder
                 }
@@ -99,7 +112,7 @@ struct CarouselSlidesStripView: View {
     @ViewBuilder
     private var dotsRow: some View {
         if slides.count <= Self.maxVisibleDots {
-            HStack(spacing: 3) {
+            HStack(spacing: 2) {
                 ForEach(slides) { slide in
                     dotButton(for: slide.index)
                 }
@@ -115,14 +128,14 @@ struct CarouselSlidesStripView: View {
     /// last 3 dots. Order is rebuilt around `currentIndex` so the active dot is always
     /// visible regardless of carousel length.
     private var collapsedDotsRow: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 2) {
             ForEach(visibleDotIndexes, id: \.self) { idx in
                 if idx < 0 {
                     // Sentinel for ellipsis — sized to match dots so spacing stays uniform
                     Circle()
                         .fill(Color.white.opacity(0.30))
                         .frame(width: 3, height: 3)
-                        .frame(width: 10, height: 28)
+                        .frame(width: 8, height: 24)
                 } else {
                     dotButton(for: idx)
                 }
@@ -159,7 +172,12 @@ struct CarouselSlidesStripView: View {
             Circle()
                 .fill(isActive ? Color.white : Color.white.opacity(0.35))
                 .frame(width: 6, height: 6)
-                .frame(width: 14, height: 28)         // tight hit area keeps dots visually grouped
+                // 10pt-wide hit cell — visually Instagram-tight (only ~2pt padding on
+                // each side of the dot). Sub-44pt is technically below Apple's
+                // accessibility minimum but matches every social media app's
+                // page-indicator style; the row of dots is ALSO tappable as one big
+                // target via the swipe gesture, so functional reach isn't degraded.
+                .frame(width: 10, height: 24)
                 .contentShape(Rectangle())
                 .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isActive)
         }
