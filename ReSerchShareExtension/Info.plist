@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>ReSerch</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<!--
+				Activation rule: ReSerch appears in the share sheet whenever the
+				host item provides at least one URL or a plain-text snippet that
+				contains a URL. This covers TikTok, Instagram, YouTube, Reels,
+				X/Twitter, Threads, and Safari's built-in share-this-page action.
+				The text path is critical for TikTok specifically — TikTok shares
+				the link as plain text rather than as a typed URL attachment.
+			-->
+			<key>NSExtensionActivationRule</key>
+			<dict>
+				<key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
+				<integer>1</integer>
+				<key>NSExtensionActivationSupportsText</key>
+				<true/>
+			</dict>
+		</dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.share-services</string>
+		<!--
+			Pure UIKit entry point — no SLComposeServiceViewController, no compose UI.
+			ShareViewController immediately handoff-launches the host app via custom
+			URL scheme and exits, so there's nothing for the user to see or interact
+			with at the extension level.
+		-->
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
+	</dict>
+</dict>
+</plist>
