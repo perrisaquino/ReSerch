@@ -22,15 +22,23 @@ struct DocumentNotesJournalSheet: View {
     /// Pending delete confirmation target. Non-empty notes ask before removal.
     @State private var pendingDelete: DocumentNote?
 
+    /// App-wide canonical background defined in `ReSerchApp.swift` as
+    /// `Color(red: 0.07, green: 0.09, blue: 0.13)`. The sheet sits one elevation
+    /// step above that to read as "lifted" from the page beneath without
+    /// fighting the rest of the dark-navy aesthetic.
+    private static let sheetBackground = Color(red: 0.10, green: 0.12, blue: 0.16)
+
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.black.ignoresSafeArea()
+                Self.sheetBackground.ignoresSafeArea()
                 content
             }
             .navigationTitle("Notes")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
+            .toolbarBackground(Self.sheetBackground, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .preferredColorScheme(.dark)
             .alert("Delete this note?", isPresented: deleteConfirmationBinding) {
                 Button("Cancel", role: .cancel) { pendingDelete = nil }
@@ -64,8 +72,9 @@ struct DocumentNotesJournalSheet: View {
             List {
                 ForEach(sortedNotes) { note in
                     noteRow(note)
-                        .listRowBackground(Color(white: 0.07))
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) {
                                 requestDelete(note)
@@ -95,18 +104,23 @@ struct DocumentNotesJournalSheet: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 14) {
             Image(systemName: "note.text")
-                .font(.system(size: 40, weight: .light))
-                .foregroundStyle(.white.opacity(0.35))
-            Text("No notes yet.")
-                .font(.headline)
-                .foregroundStyle(.white.opacity(0.7))
-            Text("Tap + to capture a thought.")
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.45))
+                .font(.system(size: 38, weight: .light))
+                .foregroundStyle(.white.opacity(0.30))
+            VStack(spacing: 6) {
+                Text("Mini journal")
+                    .font(.headline)
+                    .foregroundStyle(.white.opacity(0.85))
+                Text("Capture reflections and ideas about this transcript over time. Tap + to start.")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.5))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 36)
     }
 
     // MARK: - Row
@@ -114,46 +128,49 @@ struct DocumentNotesJournalSheet: View {
     @ViewBuilder
     private func noteRow(_ note: DocumentNote) -> some View {
         let expanded = expandedID == note.id
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                if note.isPinned {
-                    Image(systemName: "pin.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.yellow.opacity(0.85))
-                }
-                Text(timestampLabel(for: note))
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.gray)
-                    .textCase(.uppercase)
-                Spacer()
-                if !expanded {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.25))
-                }
-            }
-
+        VStack(alignment: .leading, spacing: 8) {
+            // Body first — leads the row with content the way Apple Notes does. The
+            // timestamp is metadata, not the headline.
             if expanded {
                 editorBody(for: note)
             } else {
                 Text(note.text.isEmpty ? "Empty note" : note.text)
                     .font(.system(size: 15))
-                    .foregroundStyle(note.text.isEmpty ? .white.opacity(0.35) : .white.opacity(0.85))
+                    .foregroundStyle(note.text.isEmpty ? .white.opacity(0.35) : .white.opacity(0.92))
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack(spacing: 8) {
+                if note.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.yellow.opacity(0.85))
+                    Text("Pinned")
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color.yellow.opacity(0.75))
+                        .textCase(.uppercase)
+                    Text("·")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.35))
+                }
+                Text(timestampLabel(for: note))
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.45))
+                Spacer()
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 14)
                 .fill(Color.white.opacity(0.04))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 14)
                 .strokeBorder(
-                    note.isPinned ? Color.yellow.opacity(0.18) : Color.white.opacity(0.06),
+                    note.isPinned ? Color.yellow.opacity(0.22) : Color.white.opacity(0.07),
                     lineWidth: 1
                 )
         )
