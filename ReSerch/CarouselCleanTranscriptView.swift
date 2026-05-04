@@ -13,6 +13,15 @@ import SwiftUI
 /// readable paragraphs.
 struct CarouselCleanTranscriptView: View {
     let slides: [TranscriptCarouselSlide]
+    /// All annotations attached to the parent transcript. Filtered per-slide before
+    /// being handed to each slide's `AnnotableTranscriptView`.
+    var annotations: [Annotation] = []
+    /// Fired when the user long-presses to highlight text inside a slide. Caller adds
+    /// an `Annotation` with the supplied `slideIndex`.
+    var onHighlight: ((_ text: String, _ offset: Int, _ slideIndex: Int) -> Void)? = nil
+    /// Fired when the user picks "Add Note" from the highlight menu. Caller routes to
+    /// the comment-entry sheet, then persists with the slide index when confirmed.
+    var onAddNote: ((_ text: String, _ offset: Int, _ slideIndex: Int) -> Void)? = nil
 
     var body: some View {
         if slides.isEmpty {
@@ -46,15 +55,24 @@ struct CarouselCleanTranscriptView: View {
                 .foregroundStyle(.gray)
                 .textCase(.uppercase)
 
-            // Body recipe matches documentNoteSection (.font(.system(size: 15)),
-            // .foregroundStyle(.white.opacity(0.85)), .textSelection(.enabled)).
-            // No explicit lineSpacing — let SwiftUI handle line height per platform.
+            // Slide content uses the same AnnotableTranscriptView the regular
+            // transcript view uses, so highlights, comments, **bold** and
+            // ==highlight== markdown render exactly the same way. We filter the
+            // entry's annotations down to ones that belong to this slide via
+            // `slideIndex` and forward the slide index back through the callbacks
+            // when the user adds a new annotation.
             if let cleaned = readableText(from: slide.recognizedText) {
-                Text(cleaned)
-                    .font(.system(size: 15))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                AnnotableTranscriptView(
+                    text: cleaned,
+                    annotations: annotations.filter { $0.slideIndex == slide.index },
+                    onHighlight: { text, offset in
+                        onHighlight?(text, offset, slide.index)
+                    },
+                    onAddNote: { text, offset in
+                        onAddNote?(text, offset, slide.index)
+                    }
+                )
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Text(slide.imageDownloadDescription)
                     .font(.system(size: 14))

@@ -4,15 +4,83 @@ struct Annotation: Codable, Identifiable {
     let id: UUID
     var text: String
     var comment: String
+    /// Offset relative to the *enclosing* text. For regular video transcripts that's
+    /// the full transcript string. For carousels (`slideIndex != nil`) it's that
+    /// specific slide's recognized text. Without the slide index, the same offset
+    /// would point at different positions in different slides.
     var offset: Int
     let createdAt: Date
+    /// Carousel context. nil for regular video transcripts (legacy + non-carousel content).
+    /// Set to the slide's `index` field when an annotation lives inside a carousel slide.
+    var slideIndex: Int?
 
-    init(text: String, comment: String = "", offset: Int) {
+    init(text: String, comment: String = "", offset: Int, slideIndex: Int? = nil) {
         self.id = UUID()
         self.text = text
         self.comment = comment
         self.offset = offset
         self.createdAt = Date()
+        self.slideIndex = slideIndex
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, text, comment, offset, createdAt, slideIndex
+    }
+
+    // Custom decode so existing annotations (no slideIndex field) still load.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        text = try c.decode(String.self, forKey: .text)
+        comment = try c.decode(String.self, forKey: .comment)
+        offset = try c.decode(Int.self, forKey: .offset)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        slideIndex = try c.decodeIfPresent(Int.self, forKey: .slideIndex)
+    }
+}
+
+/// One entry in the per-transcript "mini journal." Multiple notes can be attached to
+/// the same transcript over time — each with its own creation/update timestamps and
+/// an optional `isPinned` flag. At most one note per transcript is pinned at a time;
+/// the pinned note exports BEFORE the transcript as a summary, while non-pinned notes
+/// export AFTER (clean Obsidian-friendly layout).
+struct DocumentNote: Identifiable, Codable, Hashable {
+    let id: UUID
+    var text: String
+    let createdAt: Date
+    var updatedAt: Date
+    var isPinned: Bool
+
+    init(text: String = "", isPinned: Bool = false) {
+        self.id = UUID()
+        self.text = text
+        let now = Date()
+        self.createdAt = now
+        self.updatedAt = now
+        self.isPinned = isPinned
+    }
+
+    /// Internal initializer used by `TranscriptEntry`'s legacy-string migration path
+    /// so the migrated note inherits the entry's date instead of being stamped "now"
+    /// (which would lie about when the note was actually written).
+    static func migrating(text: String, timestamp: Date) -> DocumentNote {
+        var note = DocumentNote(text: text, isPinned: false)
+        note._setMigrationTimestamps(timestamp)
+        return note
+    }
+
+    private mutating func _setMigrationTimestamps(_ when: Date) {
+        // We have to use the memberwise initializer since createdAt is `let`, so
+        // rebuild the struct in place.
+        self = DocumentNote(_id: id, text: text, createdAt: when, updatedAt: when, isPinned: isPinned)
+    }
+
+    private init(_id: UUID, text: String, createdAt: Date, updatedAt: Date, isPinned: Bool) {
+        self.id = _id
+        self.text = text
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.isPinned = isPinned
     }
 }
 
@@ -223,12 +291,18 @@ struct TranscriptEntry: Identifiable, Hashable, Codable {
     /// Resolved to a `Notebook` by `TranscriptViewModel` from its loaded notebooks.
     var notebookID: UUID?
 
-    /// Free-text note attached to the whole transcript, separate from inline annotations.
-    /// Renders in markdown export as `## Notes` above the caption.
-    var documentNote: String?
+    /// Mini-journal of notes the user has captured for this transcript. Replaces the
+    /// older single `documentNote: String?` field — see custom decoder below for the
+    /// migration path. Order is irrelevant on disk; the UI layer sorts by pinned-state
+    /// then `updatedAt`.
+    var documentNotes: [DocumentNote] = []
 
     enum CodingKeys: String, CodingKey {
-        case id, result, date, notebookID, documentNote
+        case id, result, date, notebookID
+        case documentNotes
+        // Legacy field kept ONLY in the keys enum so the decoder can read it. Never
+        // written by encode(). Idempotent re-saves naturally clean up old data.
+        case documentNote
     }
 
     init(result: TranscriptResult) {
@@ -236,18 +310,41 @@ struct TranscriptEntry: Identifiable, Hashable, Codable {
         self.result = result
         self.date = Date()
         self.notebookID = nil
-        self.documentNote = nil
+        self.documentNotes = []
     }
 
-    // Custom decode so older entries (saved before notebookID/documentNote existed)
-    // still load with nil for the new fields rather than failing.
+    // Custom decode supports three shapes simultaneously:
+    //   1. Brand new entries — only `documentNotes` is present.
+    //   2. Older entries with a single `documentNote: String?` — migrate to a
+    //      one-element `[DocumentNote]` if non-empty, else empty array. createdAt/
+    //      updatedAt fall back to the entry's `date` since that's the only
+    //      timestamp we have for legacy notes.
+    //   3. Original entries with neither field present — empty array.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
         result = try c.decode(TranscriptResult.self, forKey: .result)
         date = try c.decode(Date.self, forKey: .date)
         notebookID = try c.decodeIfPresent(UUID.self, forKey: .notebookID)
-        documentNote = try c.decodeIfPresent(String.self, forKey: .documentNote)
+
+        if let notes = try c.decodeIfPresent([DocumentNote].self, forKey: .documentNotes) {
+            documentNotes = notes
+        } else if let legacy = try c.decodeIfPresent(String.self, forKey: .documentNote),
+                  !legacy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            documentNotes = [DocumentNote.migrating(text: legacy, timestamp: date)]
+        } else {
+            documentNotes = []
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(result, forKey: .result)
+        try c.encode(date, forKey: .date)
+        try c.encodeIfPresent(notebookID, forKey: .notebookID)
+        try c.encode(documentNotes, forKey: .documentNotes)
+        // legacy `documentNote` deliberately not encoded
     }
 
     var url: String { result.url }

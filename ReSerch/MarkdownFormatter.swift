@@ -1,12 +1,12 @@
 import Foundation
 
 enum MarkdownFormatter {
-    /// Backwards-compatible entry — used where notebook context isn't available.
+    /// Backwards-compatible entry — used where notebook + notes context isn't available.
     static func format(_ result: TranscriptResult) -> String {
-        format(result, notebook: nil, documentNote: nil)
+        format(result, notebook: nil, notes: [])
     }
 
-    static func format(_ result: TranscriptResult, notebook: Notebook?, documentNote: String?) -> String {
+    static func format(_ result: TranscriptResult, notebook: Notebook?, notes: [DocumentNote]) -> String {
         let today = DateFormatter.obsidianDate.string(from: Date())
         let postedStr = result.postedDate.map { DateFormatter.isoDate.string(from: $0) }
         let title = result.editableTitle.isEmpty ? result.title : result.editableTitle
@@ -77,9 +77,12 @@ enum MarkdownFormatter {
         }
         lines += [metaParts.joined(separator: "  \n"), ""]
 
-        // Document Note — sits above caption so it's the first content the user reads
-        if let note = documentNote, !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            lines += ["## Notes", "", note, ""]
+        // Pinned note — exports as a "## Pinned Note" section ABOVE the transcript so
+        // it reads as a summary / initial thought before the source content. There's
+        // at most one pinned note (single-pin invariant enforced in the view model).
+        if let pinned = notes.first(where: { $0.isPinned }),
+           !pinned.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines += ["## Pinned Note", "", pinned.text, ""]
         }
 
         // Caption
@@ -90,6 +93,21 @@ enum MarkdownFormatter {
         // Transcript (with annotation markup if any exist)
         if !result.transcript.isEmpty {
             lines += ["## Transcript", "", annotatedTranscript(result), ""]
+        }
+
+        // Non-pinned notes go BELOW the transcript so the source content appears first
+        // when the user pastes into Obsidian / Notion. Sorted oldest-first so the
+        // reader's eye flows top-to-bottom in time. Empty notes are filtered out
+        // defensively even though the auto-discard UX should already prevent them.
+        let unpinnedNotes = notes
+            .filter { !$0.isPinned && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.createdAt < $1.createdAt }
+        if !unpinnedNotes.isEmpty {
+            lines += ["## Notes", ""]
+            for note in unpinnedNotes {
+                lines += ["### \(DateFormatter.noteHeading.string(from: note.createdAt))", ""]
+                lines += [note.text, ""]
+            }
         }
 
         return lines.joined(separator: "\n")
@@ -254,6 +272,15 @@ extension DateFormatter {
     static let isoDate: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    /// Heading format for individual entries inside the `## Notes` markdown block.
+    /// e.g. "Apr 12, 2026 · 3:14 PM" — readable when pasted into Obsidian, sortable
+    /// when scanned alphabetically (since the year is fully spelled).
+    static let noteHeading: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, yyyy · h:mm a"
         return f
     }()
 }

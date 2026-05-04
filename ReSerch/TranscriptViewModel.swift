@@ -635,7 +635,7 @@ final class TranscriptViewModel {
 
     func markdownFor(_ entry: TranscriptEntry) -> String {
         let nb = notebook(for: entry.notebookID)
-        return MarkdownFormatter.format(entry.result, notebook: nb, documentNote: entry.documentNote)
+        return MarkdownFormatter.format(entry.result, notebook: nb, notes: entry.documentNotes)
     }
 
     /// Compiles every transcript in `notebook` into a single markdown document, separated by `---`.
@@ -772,10 +772,48 @@ final class TranscriptViewModel {
         saveHistoryAsync()
     }
 
-    func setDocumentNote(_ entry: TranscriptEntry, to note: String) {
-        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let idx = history.firstIndex(where: { $0.id == entry.id }) else { return }
-        history[idx].documentNote = trimmed.isEmpty ? nil : note
+    // MARK: - Document Notes (mini journal)
+
+    /// Appends a new note to the entry's mini-journal and returns its id so callers
+    /// can immediately put it into edit mode in the journal sheet.
+    @discardableResult
+    func addDocumentNote(_ entry: TranscriptEntry, text: String = "") -> UUID? {
+        guard let idx = history.firstIndex(where: { $0.id == entry.id }) else { return nil }
+        let note = DocumentNote(text: text, isPinned: false)
+        history[idx].documentNotes.append(note)
+        saveHistoryAsync()
+        return note.id
+    }
+
+    func updateDocumentNote(_ entry: TranscriptEntry, noteID: UUID, text: String) {
+        guard let entryIdx = history.firstIndex(where: { $0.id == entry.id }) else { return }
+        guard let noteIdx = history[entryIdx].documentNotes.firstIndex(where: { $0.id == noteID }) else { return }
+        history[entryIdx].documentNotes[noteIdx].text = text
+        history[entryIdx].documentNotes[noteIdx].updatedAt = Date()
+        saveHistoryAsync()
+    }
+
+    func removeDocumentNote(_ entry: TranscriptEntry, noteID: UUID) {
+        guard let entryIdx = history.firstIndex(where: { $0.id == entry.id }) else { return }
+        history[entryIdx].documentNotes.removeAll { $0.id == noteID }
+        saveHistoryAsync()
+    }
+
+    /// Pins the named note. Enforces the single-pin invariant by clearing every
+    /// other note's `isPinned` flag in the same atomic operation — the journal
+    /// can never end up with two pinned notes after this call.
+    func pinDocumentNote(_ entry: TranscriptEntry, noteID: UUID) {
+        guard let entryIdx = history.firstIndex(where: { $0.id == entry.id }) else { return }
+        for i in history[entryIdx].documentNotes.indices {
+            history[entryIdx].documentNotes[i].isPinned = (history[entryIdx].documentNotes[i].id == noteID)
+        }
+        saveHistoryAsync()
+    }
+
+    func unpinDocumentNote(_ entry: TranscriptEntry, noteID: UUID) {
+        guard let entryIdx = history.firstIndex(where: { $0.id == entry.id }) else { return }
+        guard let noteIdx = history[entryIdx].documentNotes.firstIndex(where: { $0.id == noteID }) else { return }
+        history[entryIdx].documentNotes[noteIdx].isPinned = false
         saveHistoryAsync()
     }
 

@@ -56,6 +56,8 @@ struct SettingsView: View {
                     Toggle("Embed images in carousel notes", isOn: $embedCarouselImages)
                 }
 
+                formatSection
+
                 syncSection
 
                 dataSection
@@ -122,6 +124,20 @@ struct SettingsView: View {
             Button("Redeem Code") {
                 showRedeem = true
             }
+        }
+    }
+
+    @ViewBuilder
+    private var formatSection: some View {
+        Section {
+            Toggle("Use Rich Text by default", isOn: Binding(
+                get: { prefs.richTextMode },
+                set: { newValue in prefs.richTextMode = newValue; prefs.save() }
+            ))
+        } header: {
+            Text("Format")
+        } footer: {
+            Text("Affects how transcripts copy and share. You can flip this per transcript inside the MD / Rich tabs.")
         }
     }
 

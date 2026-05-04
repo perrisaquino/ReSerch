@@ -16,6 +16,10 @@ struct TranscriptDetailView: View {
     @State private var showAnnotations = false
     @State private var pendingHighlightText: String?
     @State private var pendingHighlightOffset: Int?
+    /// nil for whole-transcript highlights (regular video). Set when the in-progress
+    /// highlight came from a carousel slide so the eventual Annotation gets the
+    /// matching slideIndex.
+    @State private var pendingHighlightSlideIndex: Int?
     @State private var showNoteInput = false
     @State private var showEditorComment = false
     @State private var showDocNoteEditor = false
@@ -66,7 +70,8 @@ struct TranscriptDetailView: View {
                     let ann = Annotation(
                         text: pendingHighlightText ?? "",
                         comment: comment,
-                        offset: pendingHighlightOffset ?? 0
+                        offset: pendingHighlightOffset ?? 0,
+                        slideIndex: pendingHighlightSlideIndex
                     )
                     entry.result.annotations.append(ann)
                     vm.updateEntry(entry)
@@ -84,15 +89,12 @@ struct TranscriptDetailView: View {
                 }
             }
             .sheet(isPresented: $showDocNoteEditor) {
-                DocumentNoteEditor(initialText: entry.documentNote ?? "") { newText in
-                    entry.documentNote = newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : newText
-                    vm.setDocumentNote(entry, to: newText)
-                }
-                // Half-sheet at first, draggable up to full. Keeps the transcript /
-                // video context visible behind the editor so the user can write
-                // grounded notes without losing the source material on screen.
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                DocumentNotesJournalSheet(entry: $entry, vm: vm)
+                    // Half-sheet at first, draggable up to full. Keeps the transcript
+                    // visible behind the journal so the user can write grounded
+                    // reflections without losing the source material on screen.
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .onChange(of: isEditing) { _, editing in
                 if editing {
@@ -360,23 +362,36 @@ struct TranscriptDetailView: View {
         .padding(20)
     }
 
-    // MARK: - Document Note
+    // MARK: - Document Notes (mini journal)
 
     @ViewBuilder
     private var documentNoteSection: some View {
-        let note = entry.documentNote ?? ""
-        if note.isEmpty {
+        let notes = entry.documentNotes
+        let pinned = notes.first(where: { $0.isPinned })
+        let count = notes.count
+
+        VStack(alignment: .leading, spacing: 10) {
+            // Pinned-note preview sits ABOVE the button so it reads as a summary the
+            // user attached to this transcript, mirroring the markdown export order
+            // where the pinned note exports above the transcript section.
+            if let pin = pinned, !pin.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                pinnedNotePreview(pin)
+            }
+
             Button {
                 showDocNoteEditor = true
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: "square.and.pencil")
+                    Image(systemName: count == 0 ? "square.and.pencil" : "note.text")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(.white.opacity(0.55))
-                    Text("Add a transcript note")
+                    Text(count == 0 ? "Add a transcript note" : "See transcript notes (\(count))")
                         .font(.system(size: 14))
                         .foregroundStyle(.white.opacity(0.55))
                     Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.25))
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
@@ -390,41 +405,37 @@ struct TranscriptDetailView: View {
                 )
             }
             .buttonStyle(.plain)
-        } else {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Notes")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.gray)
-                        .textCase(.uppercase)
-                    Spacer()
-                    Button {
-                        showDocNoteEditor = true
-                    } label: {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 13))
-                            .foregroundStyle(Color(white: 0.5))
-                            .padding(6)
-                            .background(Color(white: 0.15), in: RoundedRectangle(cornerRadius: 6))
-                    }
-                }
-                Text(note)
-                    .font(.system(size: 15))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.white.opacity(0.04))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(Color.white.opacity(0.06), lineWidth: 1)
-                    )
+        }
+    }
+
+    @ViewBuilder
+    private func pinnedNotePreview(_ note: DocumentNote) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Color.yellow.opacity(0.85))
+                Text("Pinned")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.gray)
+                    .textCase(.uppercase)
             }
+            Text(note.text)
+                .font(.system(size: 15))
+                .foregroundStyle(.white.opacity(0.92))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.yellow.opacity(0.06))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.yellow.opacity(0.18), lineWidth: 1)
+                )
         }
     }
 
@@ -516,13 +527,33 @@ struct TranscriptDetailView: View {
             // Carousels: render structured slide blocks (no markdown noise).
             // Everything else: existing annotatable transcript view.
             if isCarouselTranscript, let slides = entry.result.carouselSlides {
-                CarouselCleanTranscriptView(slides: slides)
+                CarouselCleanTranscriptView(
+                    slides: slides,
+                    annotations: entry.result.annotations,
+                    onHighlight: { text, offset, slideIndex in
+                        entry.result.annotations.append(
+                            Annotation(text: text, offset: offset, slideIndex: slideIndex)
+                        )
+                        vm.updateEntry(entry)
+                        if entry.result.annotations.count == 1 {
+                            ReviewPromptManager.shared.recordMilestone(.firstAnnotation)
+                        }
+                    },
+                    onAddNote: { text, offset, slideIndex in
+                        pendingHighlightText = text
+                        pendingHighlightOffset = offset
+                        pendingHighlightSlideIndex = slideIndex
+                        showNoteInput = true
+                    }
+                )
             } else {
                 AnnotableTranscriptView(
                     text: entry.result.transcript,
-                    annotations: entry.result.annotations,
+                    annotations: entry.result.annotations.filter { $0.slideIndex == nil },
                     onHighlight: { text, offset in
-                        entry.result.annotations.append(Annotation(text: text, offset: offset))
+                        entry.result.annotations.append(
+                            Annotation(text: text, offset: offset, slideIndex: nil)
+                        )
                         vm.updateEntry(entry)
                         if entry.result.annotations.count == 1 {
                             ReviewPromptManager.shared.recordMilestone(.firstAnnotation)
@@ -531,6 +562,7 @@ struct TranscriptDetailView: View {
                     onAddNote: { text, offset in
                         pendingHighlightText   = text
                         pendingHighlightOffset = offset
+                        pendingHighlightSlideIndex = nil
                         showNoteInput = true
                     }
                 )
