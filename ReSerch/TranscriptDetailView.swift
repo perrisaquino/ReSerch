@@ -128,6 +128,13 @@ struct TranscriptDetailView: View {
         .ignoresSafeArea(.container, edges: .bottom)
     }
 
+    /// True when this transcript came from an Instagram carousel or TikTok photo set —
+    /// drives the swipeable image strip header + clean per-slide rendering instead of
+    /// the regular video player / static thumbnail / raw-markdown body.
+    private var isCarouselTranscript: Bool {
+        (entry.result.carouselSlides?.isEmpty == false)
+    }
+
     private var normalDetailView: some View {
         // ZStack lets the black background bleed to the bottom edge independently
         // of the content VStack, which must stay safe-area-aware so safeAreaInset
@@ -146,11 +153,21 @@ struct TranscriptDetailView: View {
                         .frame(height: videoHeight)
                         .background(Color.black)
                     dragHandle
+                } else if isCarouselTranscript, let slides = entry.result.carouselSlides {
+                    // Carousel posts: replace the static thumbnail with a swipeable strip
+                    // that recreates the original platform's pagination experience.
+                    CarouselSlidesStripView(slides: slides)
+                        .frame(height: 380)
+                    dragHandle
                 }
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        if youTubeVideoId == nil && tikTokVideoId == nil { thumbnailSection }
+                        // Static thumbnail only when we have no richer media to show
+                        // (no video player, no carousel strip).
+                        if youTubeVideoId == nil && tikTokVideoId == nil && !isCarouselTranscript {
+                            thumbnailSection
+                        }
                         contentSection
                     }
                 }
@@ -455,23 +472,27 @@ struct TranscriptDetailView: View {
                 Text("\(entry.result.transcript.split(separator: " ").count) words")
                     .font(.caption2)
                     .foregroundStyle(.gray)
-                // Highlights button with count badge
-                Button {
-                    showAnnotations = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "highlighter")
-                        if !entry.result.annotations.isEmpty {
-                            Text("\(entry.result.annotations.count)")
-                                .font(.caption2)
+                // Highlights button with count badge — hidden on carousel transcripts
+                // because AnnotableTranscriptView (which annotations live in) isn't shown.
+                if !isCarouselTranscript {
+                    Button {
+                        showAnnotations = true
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "highlighter")
+                            if !entry.result.annotations.isEmpty {
+                                Text("\(entry.result.annotations.count)")
+                                    .font(.caption2)
+                            }
                         }
+                        .font(.system(size: 13))
+                        .foregroundStyle(entry.result.annotations.isEmpty ? Color(white: 0.5) : Color.yellow.opacity(0.9))
+                        .padding(6)
+                        .background(Color(white: 0.15), in: RoundedRectangle(cornerRadius: 6))
                     }
-                    .font(.system(size: 13))
-                    .foregroundStyle(entry.result.annotations.isEmpty ? Color(white: 0.5) : Color.yellow.opacity(0.9))
-                    .padding(6)
-                    .background(Color(white: 0.15), in: RoundedRectangle(cornerRadius: 6))
                 }
-                // Pencil edit button
+                // Pencil edit button — drops into raw markdown editor for both regular
+                // transcripts and carousels (lets user fix OCR mistakes).
                 Button {
                     editingText = entry.result.transcript
                     isEditing = true
@@ -484,22 +505,28 @@ struct TranscriptDetailView: View {
                 }
             }
 
-            AnnotableTranscriptView(
-                text: entry.result.transcript,
-                annotations: entry.result.annotations,
-                onHighlight: { text, offset in
-                    entry.result.annotations.append(Annotation(text: text, offset: offset))
-                    vm.updateEntry(entry)
-                    if entry.result.annotations.count == 1 {
-                        ReviewPromptManager.shared.recordMilestone(.firstAnnotation)
+            // Carousels: render structured slide blocks (no markdown noise).
+            // Everything else: existing annotatable transcript view.
+            if isCarouselTranscript, let slides = entry.result.carouselSlides {
+                CarouselCleanTranscriptView(slides: slides)
+            } else {
+                AnnotableTranscriptView(
+                    text: entry.result.transcript,
+                    annotations: entry.result.annotations,
+                    onHighlight: { text, offset in
+                        entry.result.annotations.append(Annotation(text: text, offset: offset))
+                        vm.updateEntry(entry)
+                        if entry.result.annotations.count == 1 {
+                            ReviewPromptManager.shared.recordMilestone(.firstAnnotation)
+                        }
+                    },
+                    onAddNote: { text, offset in
+                        pendingHighlightText   = text
+                        pendingHighlightOffset = offset
+                        showNoteInput = true
                     }
-                },
-                onAddNote: { text, offset in
-                    pendingHighlightText   = text
-                    pendingHighlightOffset = offset
-                    showNoteInput = true
-                }
-            )
+                )
+            }
         }
     }
 

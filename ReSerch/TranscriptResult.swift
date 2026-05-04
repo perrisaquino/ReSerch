@@ -16,6 +16,29 @@ struct Annotation: Codable, Identifiable {
     }
 }
 
+/// Per-slide payload kept on a TranscriptResult when the source was a carousel post
+/// (Instagram carousel, TikTok photo set). Lets the detail view re-render the original
+/// images as a swipeable strip + show clean per-slide OCR text instead of the raw
+/// markdown that's stored in `TranscriptResult.transcript` for export purposes.
+struct TranscriptCarouselSlide: Codable, Identifiable, Hashable {
+    let index: Int
+    let imageURL: URL?       // remote CDN URL — survives across reinstalls
+    let localImagePath: URL? // app's Documents copy when "Embed images" was on; nil otherwise
+    let recognizedText: String?  // empty string if OCR ran but found nothing; nil if OCR failed
+
+    var id: Int { index }
+
+    /// Best-available image URL: prefers the local file if it still exists on disk,
+    /// otherwise falls back to the remote URL. Local files get wiped on app reinstall;
+    /// the remote URL keeps working until the platform CDN expires (months).
+    var displayURL: URL? {
+        if let local = localImagePath, FileManager.default.fileExists(atPath: local.path) {
+            return local
+        }
+        return imageURL
+    }
+}
+
 struct TranscriptResult: Codable {
     var title: String
     var editableTitle: String
@@ -33,12 +56,17 @@ struct TranscriptResult: Codable {
     let duration: String?
     let postedDate: Date?
     let thumbnailURL: URL?
+    /// Populated for carousel results (Instagram carousels, TikTok photo posts). Drives
+    /// the swipeable image strip + clean per-slide rendering in TranscriptDetailView.
+    /// Nil for everything else (regular videos, audio imports, captions-based YT, etc.).
+    var carouselSlides: [TranscriptCarouselSlide]?
 
     enum CodingKeys: String, CodingKey {
         case title, editableTitle, author, handle, platform, url, caption
         case transcript, annotations
         case viewCount, likeCount, commentCount, shareCount
         case duration, postedDate, thumbnailURL
+        case carouselSlides
     }
 
     init(
@@ -55,7 +83,8 @@ struct TranscriptResult: Codable {
         shareCount: Int? = nil,
         duration: String? = nil,
         postedDate: Date? = nil,
-        thumbnailURL: URL? = nil
+        thumbnailURL: URL? = nil,
+        carouselSlides: [TranscriptCarouselSlide]? = nil
     ) {
         self.title = title
         self.editableTitle = title
@@ -72,9 +101,11 @@ struct TranscriptResult: Codable {
         self.duration = duration
         self.postedDate = postedDate
         self.thumbnailURL = thumbnailURL
+        self.carouselSlides = carouselSlides
     }
 
-    // Custom decode so `annotations` defaults to [] for entries saved before this field existed
+    // Custom decode so older entries (saved before annotations / carouselSlides existed)
+    // fall back to safe defaults instead of failing the whole load.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         title         = try c.decode(String.self,    forKey: .title)
@@ -94,6 +125,7 @@ struct TranscriptResult: Codable {
         duration      = try c.decodeIfPresent(String.self, forKey: .duration)
         postedDate    = try c.decodeIfPresent(Date.self,   forKey: .postedDate)
         thumbnailURL  = try c.decodeIfPresent(URL.self,    forKey: .thumbnailURL)
+        carouselSlides = try c.decodeIfPresent([TranscriptCarouselSlide].self, forKey: .carouselSlides)
     }
 }
 

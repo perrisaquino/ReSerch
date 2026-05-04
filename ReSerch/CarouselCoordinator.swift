@@ -17,6 +17,19 @@ final class CarouselCoordinator {
         let markdown = CarouselNoteFormatter.format(processed, embedImages: embedImages)
 
         let title = "\(processed.creatorDisplayName) — Carousel (\(processed.slideCount) slides)"
+
+        // Persist the structured slide payload alongside the markdown so TranscriptDetailView
+        // can re-render the original images as a swipeable strip + render OCR text per slide
+        // without fighting the markdown export format.
+        let displaySlides = processed.slides.map { slide in
+            TranscriptCarouselSlide(
+                index: slide.index,
+                imageURL: slide.imageURL,
+                localImagePath: slide.localImagePath,
+                recognizedText: slide.recognizedText
+            )
+        }
+
         return TranscriptResult(
             title: title,
             author: processed.creatorDisplayName,
@@ -27,7 +40,8 @@ final class CarouselCoordinator {
             transcript: markdown,
             likeCount: processed.likeCount,
             postedDate: processed.postedDate,
-            thumbnailURL: processed.slides.first?.imageURL
+            thumbnailURL: processed.slides.first?.imageURL,
+            carouselSlides: displaySlides
         )
     }
 }
