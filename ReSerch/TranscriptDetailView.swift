@@ -977,6 +977,42 @@ struct TranscriptDetailView: View {
         return max(window.safeAreaInsets.top, 20)
     }
 
+    // MARK: - Copy helpers (long-press menu on the Copy button)
+
+    private func copyTranscriptTextOnly() {
+        // Just the transcribed words — no metadata, no frontmatter, no notes.
+        // Equivalent to "select all + copy" of the transcript section.
+        UIPasteboard.general.string = entry.result.transcript
+        flashCopied()
+    }
+
+    private func copyCaptionOnly() {
+        UIPasteboard.general.string = entry.result.caption
+        flashCopied()
+    }
+
+    private func copyAllNotes() {
+        // Pinned first, then chronological. Each note prefixed with its timestamp
+        // so a paste into Obsidian / Notion reads as a journal section.
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy · h:mm a"
+        let pinned = entry.documentNotes.filter { $0.isPinned }
+        let unpinned = entry.documentNotes.filter { !$0.isPinned }.sorted { $0.createdAt < $1.createdAt }
+        let blocks = (pinned + unpinned)
+            .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { "### \(formatter.string(from: $0.createdAt))\(($0.isPinned ? " · 📌 Pinned" : ""))\n\n\($0.text)" }
+        UIPasteboard.general.string = blocks.joined(separator: "\n\n")
+        flashCopied()
+    }
+
+    private func flashCopied() {
+        copied = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            copied = false
+        }
+    }
+
     /// Persists the editor's contents. For regular video transcripts this just writes
     /// the markdown blob back to `entry.result.transcript`. For carousels we ALSO
     /// parse the blob into per-slide text and update each slide's `recognizedText` —
@@ -1066,7 +1102,11 @@ struct TranscriptDetailView: View {
                 }
                 .background(Color(white: 0.10), in: RoundedRectangle(cornerRadius: 8))
 
-            // Copy button — full-width, proper button shape
+            // Copy button — full-width, proper button shape.
+            // Default tap copies the full formatted output (markdown or rich text).
+            // Long-press opens a context menu with focused "select all" alternatives:
+            // copy transcript text only, caption only, source URL only. Mirrors how
+            // Apple Notes / Safari surface "Copy Link" / "Copy Page" submenus.
             Button {
                 guard gate.canExport() else {
                     showPaywall = true
@@ -1098,6 +1138,32 @@ struct TranscriptDetailView: View {
                 )
                 .foregroundStyle(.white)
                 .animation(.easeInOut(duration: 0.18), value: copied)
+            }
+            .contextMenu {
+                Button {
+                    copyTranscriptTextOnly()
+                } label: {
+                    Label("Copy Transcript Text Only", systemImage: "text.alignleft")
+                }
+                Button {
+                    copyCaptionOnly()
+                } label: {
+                    Label("Copy Caption Only", systemImage: "quote.bubble")
+                }
+                .disabled(entry.result.caption.isEmpty)
+                Button {
+                    copyAllNotes()
+                } label: {
+                    Label("Copy All Notes", systemImage: "note.text")
+                }
+                .disabled(entry.documentNotes.isEmpty)
+                Button {
+                    UIPasteboard.general.string = entry.result.url
+                    flashCopied()
+                } label: {
+                    Label("Copy Source URL", systemImage: "link")
+                }
+                .disabled(entry.result.url.isEmpty)
             }
 
             // Share button — gated; presents activity sheet only after gate check
