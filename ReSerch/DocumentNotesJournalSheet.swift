@@ -86,12 +86,7 @@ struct DocumentNotesJournalSheet: View {
                                 Label("Delete", systemImage: "trash")
                             }
                             Button {
-                                if note.isPinned {
-                                    vm.unpinDocumentNote(entry, noteID: note.id)
-                                } else {
-                                    vm.pinDocumentNote(entry, noteID: note.id)
-                                }
-                                refreshLocalEntry()
+                                togglePin(note)
                             } label: {
                                 Label(
                                     note.isPinned ? "Unpin" : "Pin",
@@ -104,7 +99,20 @@ struct DocumentNotesJournalSheet: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
+            .scrollIndicators(.visible)
         }
+    }
+
+    /// Centralized pin/unpin handler used by both the swipe action and the
+    /// three-dot menu. Refreshing the local entry binding after the call keeps
+    /// the visible row order in sync with the new pinned state immediately.
+    private func togglePin(_ note: DocumentNote) {
+        if note.isPinned {
+            vm.unpinDocumentNote(entry, noteID: note.id)
+        } else {
+            vm.pinDocumentNote(entry, noteID: note.id)
+        }
+        refreshLocalEntry()
     }
 
     private var emptyState: some View {
@@ -132,19 +140,10 @@ struct DocumentNotesJournalSheet: View {
     @ViewBuilder
     private func noteRow(_ note: DocumentNote) -> some View {
         let expanded = expandedID == note.id
-        VStack(alignment: .leading, spacing: 8) {
-            // Body first — leads the row with content the way Apple Notes does. The
-            // timestamp is metadata, not the headline.
-            if expanded {
-                editorBody(for: note)
-            } else {
-                Text(note.text.isEmpty ? "Empty note" : note.text)
-                    .font(.system(size: 15))
-                    .foregroundStyle(note.text.isEmpty ? .white.opacity(0.35) : .white.opacity(0.92))
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
+        VStack(alignment: .leading, spacing: 10) {
+            // Top metadata row: pinned chip (if any) + timestamp on the left,
+            // three-dot menu on the right. Mirrors how Notion / Things place
+            // row-level actions.
             HStack(spacing: 8) {
                 if note.isPinned {
                     Image(systemName: "pin.fill")
@@ -163,6 +162,20 @@ struct DocumentNotesJournalSheet: View {
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.45))
                 Spacer()
+                noteRowMenu(for: note)
+            }
+
+            // Note body — full text by default. Tapping the row toggles inline
+            // edit mode. Empty notes render a muted placeholder hint instead so
+            // the row is still tappable to start typing.
+            if expanded {
+                editorBody(for: note)
+            } else {
+                Text(note.text.isEmpty ? "Empty note — tap to edit" : note.text)
+                    .font(.system(size: 15))
+                    .foregroundStyle(note.text.isEmpty ? .white.opacity(0.35) : .white.opacity(0.92))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
             }
         }
         .padding(.horizontal, 14)
@@ -184,6 +197,36 @@ struct DocumentNotesJournalSheet: View {
                 expandedID = expanded ? nil : note.id
             }
         }
+    }
+
+    /// Three-dot menu in the row's top-right — Pin/Unpin and Delete actions
+    /// surfaced explicitly so users don't have to discover the swipe gesture.
+    /// Wrapped in a button with .buttonStyle(.borderless) so tapping the menu
+    /// glyph doesn't bubble up to the row's tap-to-edit handler.
+    @ViewBuilder
+    private func noteRowMenu(for note: DocumentNote) -> some View {
+        Menu {
+            Button {
+                togglePin(note)
+            } label: {
+                Label(
+                    note.isPinned ? "Unpin" : "Pin to top",
+                    systemImage: note.isPinned ? "pin.slash" : "pin"
+                )
+            }
+            Button(role: .destructive) {
+                requestDelete(note)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.55))
+                .frame(width: 28, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
     }
 
     @ViewBuilder
