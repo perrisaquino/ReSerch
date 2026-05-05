@@ -25,50 +25,11 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 accountSection
-
-                Section("Formatting Colors") {
-                    ColorPicker("Bold", selection: colorBinding(
-                        get: { prefs.boldColor },
-                        set: { prefs.boldColor = $0 }
-                    ))
-                    ColorPicker("Highlight", selection: colorBinding(
-                        get: { prefs.highlightColor },
-                        set: { prefs.highlightColor = $0 }
-                    ))
-                    ColorPicker("Wikilink", selection: colorBinding(
-                        get: { prefs.wikilinkColor },
-                        set: { prefs.wikilinkColor = $0 }
-                    ))
-                }
-
-                Section {
-                    Toggle("Save Video to Camera Roll", isOn: Binding(
-                        get: { prefs.saveVideoToCameraRoll },
-                        set: { prefs.saveVideoToCameraRoll = $0; prefs.save() }
-                    ))
-                } header: {
-                    Text("Video")
-                } footer: {
-                    Text("When transcribing TikTok or Instagram, saves the video to your Photos library.")
-                }
-
-                Section("Carousels") {
-                    Toggle("Embed images in carousel notes", isOn: $embedCarouselImages)
-                }
-
-                formatSection
-
-                syncSection
-
-                dataSection
-
+                outputSection
+                highlightColorsSection
+                backupSection
                 feedbackSection
-
-                Section {
-                    Button("Reset to Defaults", role: .destructive) {
-                        prefs.resetToDefaults()
-                    }
-                }
+                resetSection
 
                 #if DEBUG
                 if debugUnlocked {
@@ -127,22 +88,57 @@ struct SettingsView: View {
         }
     }
 
+    /// All preferences that affect what shows up in the exported transcript:
+    /// default format, carousel image embedding, and video saving. Grouping these
+    /// together keeps the user from scrolling through three single-toggle sections.
     @ViewBuilder
-    private var formatSection: some View {
+    private var outputSection: some View {
         Section {
-            Toggle("Use Rich Text by default", isOn: Binding(
-                get: { prefs.richTextMode },
-                set: { newValue in prefs.richTextMode = newValue; prefs.save() }
+            Picker("Default Format", selection: Binding(
+                get: { prefs.richTextMode ? 1 : 0 },
+                set: { newValue in
+                    prefs.richTextMode = (newValue == 1)
+                    prefs.save()
+                }
+            )) {
+                Text("Markdown").tag(0)
+                Text("Rich Text").tag(1)
+            }
+            Toggle("Embed images in carousel notes", isOn: $embedCarouselImages)
+            Toggle("Save video to Photos", isOn: Binding(
+                get: { prefs.saveVideoToCameraRoll },
+                set: { prefs.saveVideoToCameraRoll = $0; prefs.save() }
             ))
         } header: {
-            Text("Format")
+            Text("Output")
         } footer: {
-            Text("Affects how transcripts copy and share. You can flip this per transcript inside the MD / Rich tabs.")
+            Text("Format applies when copying or sharing — switchable per transcript inside MD / Rich tabs.")
         }
     }
 
     @ViewBuilder
-    private var syncSection: some View {
+    private var highlightColorsSection: some View {
+        Section("Highlight Colors") {
+            ColorPicker("Bold", selection: colorBinding(
+                get: { prefs.boldColor },
+                set: { prefs.boldColor = $0 }
+            ))
+            ColorPicker("Highlight", selection: colorBinding(
+                get: { prefs.highlightColor },
+                set: { prefs.highlightColor = $0 }
+            ))
+            ColorPicker("Wikilink", selection: colorBinding(
+                get: { prefs.wikilinkColor },
+                set: { prefs.wikilinkColor = $0 }
+            ))
+        }
+    }
+
+    /// Combined Sync + Export section. Both speak to the same underlying concern
+    /// (your data living in more than one place) and live better as a single
+    /// section than as two adjacent ones each with their own header + footer.
+    @ViewBuilder
+    private var backupSection: some View {
         Section {
             Toggle("iCloud Sync", isOn: Binding(
                 get: { iCloudSyncEnabled },
@@ -154,19 +150,15 @@ struct SettingsView: View {
                     }
                 }
             ))
-            Text(syncStatusText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        } header: {
-            Text("Sync")
-        } footer: {
-            Text("When on, your transcripts and notebooks back up to your iCloud account so they survive uninstalling and reinstalling the app on the same Apple ID.")
-        }
-    }
+            HStack {
+                Text(syncStatusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
 
-    @ViewBuilder
-    private var dataSection: some View {
-        Section {
             Button {
                 Task { await runExport() }
             } label: {
@@ -187,9 +179,22 @@ struct SettingsView: View {
                     .foregroundStyle(.red)
             }
         } header: {
-            Text("Data")
+            Text("Backup")
         } footer: {
-            Text("Saves all transcripts, notebooks, and carousel images as a single ZIP file you can store in Files, iCloud Drive, or anywhere else.")
+            Text("Sync backs up transcripts and notebooks to your iCloud account so they survive uninstalling and reinstalling. Export saves everything as a single ZIP file.")
+        }
+    }
+
+    /// Destructive actions live alone at the bottom (above the version footer)
+    /// so they don't visually compete with everyday preferences. Renamed from
+    /// the ambiguous "Reset to Defaults" so the user knows this only affects
+    /// the highlight color pickers, not the whole app.
+    @ViewBuilder
+    private var resetSection: some View {
+        Section {
+            Button("Reset Highlight Colors", role: .destructive) {
+                prefs.resetToDefaults()
+            }
         }
     }
 
