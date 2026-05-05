@@ -48,79 +48,80 @@ struct TranscriptDetailView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if isEditing {
-                    focusedEditorView
-                } else {
-                    normalDetailView
+        // Top-level ZStack so the side-peek panel can render ABOVE the entire
+        // NavigationStack (toolbar included). Putting the overlays inside the
+        // NavigationStack as before constrained them to its content area and let
+        // the parent's "Done" toolbar leak through next to the panel — that was
+        // the "Done Done" double-button bug.
+        ZStack(alignment: .trailing) {
+            NavigationStack {
+                Group {
+                    if isEditing {
+                        focusedEditorView
+                    } else {
+                        normalDetailView
+                    }
                 }
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { toolbarContent }
-            .safeAreaInset(edge: .bottom) { if !isEditing { bottomBar } }
-            .preferredColorScheme(.dark)
-            .fullScreenCover(isPresented: $showPaywall) { PaywallView() }
-            .sheet(isPresented: $showAnnotations) {
-                AnnotationsPanel(annotations: $entry.result.annotations, transcriptText: entry.result.transcript)
-                    .onDisappear { vm.updateEntry(entry) }
-            }
-            .sheet(isPresented: $showNoteInput) {
-                NoteInputSheet(highlightedText: pendingHighlightText ?? "") { comment in
-                    let ann = Annotation(
-                        text: pendingHighlightText ?? "",
-                        comment: comment,
-                        offset: pendingHighlightOffset ?? 0,
-                        slideIndex: pendingHighlightSlideIndex
-                    )
-                    entry.result.annotations.append(ann)
-                    vm.updateEntry(entry)
-                    // Magic moment: first time the user makes a transcript "theirs" by
-                    // highlighting + commenting. Strong review trigger — they're emotionally
-                    // invested at this exact moment.
-                    if entry.result.annotations.count == 1 {
-                        ReviewPromptManager.shared.recordMilestone(.firstAnnotation)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { toolbarContent }
+                .safeAreaInset(edge: .bottom) { if !isEditing { bottomBar } }
+                .preferredColorScheme(.dark)
+                .fullScreenCover(isPresented: $showPaywall) { PaywallView() }
+                .sheet(isPresented: $showAnnotations) {
+                    AnnotationsPanel(annotations: $entry.result.annotations, transcriptText: entry.result.transcript)
+                        .onDisappear { vm.updateEntry(entry) }
+                }
+                .sheet(isPresented: $showNoteInput) {
+                    NoteInputSheet(highlightedText: pendingHighlightText ?? "") { comment in
+                        let ann = Annotation(
+                            text: pendingHighlightText ?? "",
+                            comment: comment,
+                            offset: pendingHighlightOffset ?? 0,
+                            slideIndex: pendingHighlightSlideIndex
+                        )
+                        entry.result.annotations.append(ann)
+                        vm.updateEntry(entry)
+                        // Magic moment: first time the user makes a transcript "theirs" by
+                        // highlighting + commenting. Strong review trigger — they're emotionally
+                        // invested at this exact moment.
+                        if entry.result.annotations.count == 1 {
+                            ReviewPromptManager.shared.recordMilestone(.firstAnnotation)
+                        }
+                    }
+                }
+                .sheet(isPresented: $showEditorComment) {
+                    NoteInputSheet(highlightedText: editorActions.pendingCommentText) { comment in
+                        editorActions.insertComment(comment)
+                    }
+                }
+                .onChange(of: isEditing) { _, editing in
+                    if editing {
+                        editorActions.onRequestComment = { showEditorComment = true }
+                    } else {
+                        editorActions.onRequestComment = nil
                     }
                 }
             }
-            .sheet(isPresented: $showEditorComment) {
-                NoteInputSheet(highlightedText: editorActions.pendingCommentText) { comment in
-                    editorActions.insertComment(comment)
-                }
+
+            // Backdrop dim — fades in/out. Tap to dismiss.
+            if showDocNoteEditor {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture { showDocNoteEditor = false }
+                    .transition(.opacity)
             }
-            // Side-peek overlay for the document-notes journal. iOS doesn't ship a
-            // native "trailing peek" presentation (sheets come from the bottom,
-            // pushes go full-screen), so we split the overlay into two siblings:
-            //   1. A full-screen dimmed backdrop that fades in/out (.opacity)
-            //   2. A trailing-aligned panel that slides in/out (.move(edge: .trailing))
-            // Two separate .overlay blocks keep their transitions independent — putting
-            // both inside one overlay made SwiftUI animate them as a single unit, which
-            // either killed the slide or made the backdrop slide too. This shape
-            // matches how Notion and Things do their trailing detail panes on iPad.
-            .overlay {
-                if showDocNoteEditor {
-                    Color.black.opacity(0.45)
-                        .ignoresSafeArea()
-                        .contentShape(Rectangle())
-                        .onTapGesture { showDocNoteEditor = false }
-                        .transition(.opacity)
-                }
-            }
-            .overlay(alignment: .trailing) {
-                if showDocNoteEditor {
-                    sidePeekPanel
-                        .transition(.move(edge: .trailing))
-                }
-            }
-            .animation(.easeInOut(duration: 0.28), value: showDocNoteEditor)
-            .onChange(of: isEditing) { _, editing in
-                if editing {
-                    editorActions.onRequestComment = { showEditorComment = true }
-                } else {
-                    editorActions.onRequestComment = nil
-                }
+
+            // The panel itself — slides in from the trailing edge. Lives at the
+            // top z-level so it covers the parent's nav bar (no more "Done Done"
+            // double-button), runs edge-to-edge top to bottom, and presents its
+            // own custom top bar internally.
+            if showDocNoteEditor {
+                sidePeekPanel
+                    .transition(.move(edge: .trailing))
             }
         }
+        .animation(.easeInOut(duration: 0.28), value: showDocNoteEditor)
     }
 
     // Full-screen editor — nothing above it blocking scroll/editing
@@ -611,31 +612,47 @@ struct TranscriptDetailView: View {
         }
     }
 
-    /// The trailing panel for the side-peek. Caps at 82% of screen width or 380pt,
-    /// whichever is smaller — leaves an ~18% strip of the transcript visible on
-    /// the left for spatial context.
+    /// The trailing peek panel. Width caps at 82% of screen / 380pt — leaves an
+    /// ~18% strip of the transcript visible. No nested NavigationStack: the panel
+    /// renders its own custom top bar so we can put a vertical drag indicator on
+    /// the leading edge (Apple Notes-style affordance for "this slides off").
+    /// Edges flush against the screen, no rounded corners — matches iPadOS's
+    /// trailing inspector pane convention.
     @ViewBuilder
     private var sidePeekPanel: some View {
         GeometryReader { proxy in
             let panelWidth = min(proxy.size.width * 0.82, 380)
-            // The panel wraps the journal view in its own NavigationStack so its
-            // toolbar (title + add button + Done) renders correctly even though
-            // we're not pushing this onto the parent's navigation.
-            NavigationStack {
-                DocumentNotesJournalSheet(
-                    entry: $entry,
-                    vm: vm,
-                    onDismiss: { showDocNoteEditor = false }
-                )
+            HStack(spacing: 0) {
+                Spacer()
+                ZStack(alignment: .leading) {
+                    // Body
+                    VStack(spacing: 0) {
+                        sidePeekTopBar
+                        DocumentNotesJournalSheet(
+                            entry: $entry,
+                            vm: vm,
+                            onDismiss: { showDocNoteEditor = false },
+                            chromeless: true
+                        )
+                    }
+                    .frame(width: panelWidth)
+                    .frame(maxHeight: .infinity)
+                    .background(Color(red: 0.10, green: 0.12, blue: 0.16))
+
+                    // Vertical drag indicator on the leading edge — mirrors the
+                    // horizontal handle iOS puts on the top of bottom sheets.
+                    // Visually signals "this surface can be dismissed by dragging."
+                    Capsule()
+                        .fill(Color.white.opacity(0.22))
+                        .frame(width: 4, height: 36)
+                        .padding(.leading, 6)
+                }
+                .shadow(color: .black.opacity(0.4), radius: 18, x: -6, y: 0)
             }
-            .frame(width: panelWidth)
-            .frame(maxHeight: .infinity)
-            .background(Color(red: 0.10, green: 0.12, blue: 0.16))
-            .shadow(color: .black.opacity(0.4), radius: 18, x: -6, y: 0)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            // Swipe-right anywhere on the panel dismisses it — matches iOS's
-            // sheet-dismiss gesture.
+            .ignoresSafeArea()  // covers status bar + parent nav bar — no leak
             .gesture(
+                // Swipe-right anywhere on the panel dismisses it. Matches iOS's
+                // sheet-dismiss feel (drag-the-handle).
                 DragGesture(minimumDistance: 24)
                     .onEnded { value in
                         if value.translation.width > 60 {
@@ -644,6 +661,54 @@ struct TranscriptDetailView: View {
                     }
             )
         }
+    }
+
+    /// Custom top bar inside the panel — replaces the nested NavigationStack's
+    /// nav bar so we control the layout precisely. Drag indicator sits inside
+    /// `sidePeekPanel`'s ZStack on the leading edge, separately. This bar shows
+    /// the title and the + button, nothing else (no "Done" — the swipe + tap-
+    /// outside dismiss handles that, per Apple's modal-dismissal patterns).
+    private var sidePeekTopBar: some View {
+        HStack {
+            Text("Notes")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.95))
+            Spacer()
+            Button {
+                NotificationCenter.default.post(name: .reserchAddNote, object: nil)
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Add note")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, statusBarTopInset() + 8)
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity)
+        .background(
+            Color(red: 0.10, green: 0.12, blue: 0.16)
+                .overlay(
+                    Rectangle()
+                        .fill(Color.white.opacity(0.06))
+                        .frame(height: 0.5)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                )
+        )
+    }
+
+    /// Best-effort top safe-area inset (status bar + dynamic island). Used to
+    /// pad the custom top bar so its content doesn't slide under the system UI.
+    private func statusBarTopInset() -> CGFloat {
+        let scenes = UIApplication.shared.connectedScenes
+        guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+              let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first else {
+            return 44
+        }
+        return max(window.safeAreaInsets.top, 20)
     }
 
     /// Persists the editor's contents. For regular video transcripts this just writes

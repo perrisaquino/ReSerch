@@ -1,5 +1,12 @@
 import SwiftUI
 
+extension Notification.Name {
+    /// Fired by the side-peek panel's custom + button so the journal view (which
+    /// owns the auto-discard tracking + expandedID state) can run the same
+    /// addNewNote() flow as the legacy nav-bar + button.
+    static let reserchAddNote = Notification.Name("ReSerch.AddNote")
+}
+
 /// Mini-journal view for a transcript's collection of `DocumentNote`s. Pushed onto
 /// the parent's NavigationStack via `.navigationDestination(isPresented:)`, so it
 /// slides in from the right just like a standard list-detail navigation. Lists every
@@ -18,6 +25,11 @@ struct DocumentNotesJournalSheet: View {
     /// we just signal intent. Optional for backwards compatibility with any caller
     /// that still presents this as a navigationDestination.
     var onDismiss: (() -> Void)? = nil
+    /// When true, suppress the inner NavigationStack title + toolbar so the
+    /// caller can render its own top bar (used by the side-peek panel which has
+    /// a custom drag-indicator + title bar). When false, falls back to legacy
+    /// behavior with nav title + Done + plus button (sheet/push presentation).
+    var chromeless: Bool = false
     @Environment(\.dismiss) private var dismiss
 
     /// IDs of notes that started empty when added in this sheet session. Used by the
@@ -36,15 +48,28 @@ struct DocumentNotesJournalSheet: View {
     private static let sheetBackground = Color(red: 0.10, green: 0.12, blue: 0.16)
 
     var body: some View {
-        ZStack {
-            Self.sheetBackground.ignoresSafeArea()
-            content
+        Group {
+            if chromeless {
+                // Side-peek hosts its own top bar — render content only.
+                ZStack { Self.sheetBackground; content }
+            } else {
+                ZStack {
+                    Self.sheetBackground.ignoresSafeArea()
+                    content
+                }
+                .navigationTitle("Notes")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { toolbarContent }
+                .toolbarBackground(Self.sheetBackground, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+            }
         }
-        .navigationTitle("Notes")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { toolbarContent }
-        .toolbarBackground(Self.sheetBackground, for: .navigationBar)
-        .toolbarBackground(.visible, for: .navigationBar)
+        .onReceive(NotificationCenter.default.publisher(for: .reserchAddNote)) { _ in
+            // The side-peek's custom top-bar + button posts this so we can stay
+            // the source of truth for note creation (auto-discard tracking,
+            // expandedID setup, etc).
+            addNewNote()
+        }
         .alert("Delete this note?", isPresented: deleteConfirmationBinding) {
             Button("Cancel", role: .cancel) { pendingDelete = nil }
             Button("Delete", role: .destructive) {
@@ -199,38 +224,52 @@ struct DocumentNotesJournalSheet: View {
         }
     }
 
-    /// Three-dot menu in the row's top-right — Pin/Unpin and Delete actions
-    /// surfaced explicitly so users don't have to discover the swipe gesture.
-    /// Wrapped in a button with .buttonStyle(.borderless) so tapping the menu
-    /// glyph doesn't bubble up to the row's tap-to-edit handler.
+    /// Trailing control on each row. When the row is **collapsed**: a three-dot
+    /// menu with Pin/Delete (explicit alternative to the swipe gesture for
+    /// discoverability). When the row is **expanded** (in edit mode): a
+    /// checkmark button that commits the in-progress edit by collapsing the
+    /// row — the per-row Done affordance the user asked for, in place of one
+    /// global Done button at the panel level.
     @ViewBuilder
     private func noteRowMenu(for note: DocumentNote) -> some View {
-        Menu {
+        let isExpanded = expandedID == note.id
+
+        if isExpanded {
             Button {
-                togglePin(note)
+                withAnimation(.easeInOut(duration: 0.18)) { expandedID = nil }
             } label: {
-                Label(
-                    note.isPinned ? "Unpin" : "Pin to top",
-                    systemImage: note.isPinned ? "pin.slash" : "pin"
-                )
+                Image(systemName: "checkmark")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
             }
-            Button(role: .destructive) {
-                requestDelete(note)
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Done editing note")
+        } else {
+            Menu {
+                Button {
+                    togglePin(note)
+                } label: {
+                    Label(
+                        note.isPinned ? "Unpin" : "Pin to top",
+                        systemImage: note.isPinned ? "pin.slash" : "pin"
+                    )
+                }
+                Button(role: .destructive) {
+                    requestDelete(note)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
             } label: {
-                Label("Delete", systemImage: "trash")
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
             }
-        } label: {
-            // 32×32 hit area matches Apple Settings' accessory-control sizing —
-            // sub-44 is acceptable for tightly-clustered list-row controls per
-            // HIG. The visible glyph stays small (14pt) so it doesn't dominate
-            // the row visually.
-            Image(systemName: "ellipsis")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.55))
-                .frame(width: 32, height: 32)
-                .contentShape(Rectangle())
+            .buttonStyle(.borderless)
         }
-        .buttonStyle(.borderless)
     }
 
     @ViewBuilder
