@@ -13,6 +13,11 @@ import SwiftUI
 struct DocumentNotesJournalSheet: View {
     @Binding var entry: TranscriptEntry
     var vm: TranscriptViewModel
+    /// Called when the user taps the leading "Done" button. The parent's overlay
+    /// (or sheet, or destination) is responsible for actually hiding this view —
+    /// we just signal intent. Optional for backwards compatibility with any caller
+    /// that still presents this as a navigationDestination.
+    var onDismiss: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
     /// IDs of notes that started empty when added in this sheet session. Used by the
@@ -208,8 +213,12 @@ struct DocumentNotesJournalSheet: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        // No leading "Done" button — the navigation back chevron handles dismissal
-        // now that this view is pushed via .navigationDestination instead of a sheet.
+        ToolbarItem(placement: .topBarLeading) {
+            Button("Done") {
+                if let onDismiss { onDismiss() } else { dismiss() }
+            }
+            .foregroundStyle(Color.accentColor)
+        }
         ToolbarItem(placement: .topBarTrailing) {
             Button {
                 addNewNote()

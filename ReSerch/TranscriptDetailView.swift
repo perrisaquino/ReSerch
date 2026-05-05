@@ -88,12 +88,19 @@ struct TranscriptDetailView: View {
                     editorActions.insertComment(comment)
                 }
             }
-            .navigationDestination(isPresented: $showDocNoteEditor) {
-                // Pushed onto the parent NavigationStack so the journal slides in
-                // from the right just like a standard list-detail navigation. Back
-                // chevron handles dismissal.
-                DocumentNotesJournalSheet(entry: $entry, vm: vm)
+            // Side-peek overlay for the document-notes journal. iOS doesn't ship a
+            // native "trailing peek" presentation (sheets come from the bottom,
+            // pushes go full-screen), so we render the panel as a manual overlay
+            // and animate the showDocNoteEditor flag. Width caps at ~80% of screen
+            // so the transcript stays visible on the left strip — user taps that
+            // dimmed area to dismiss without losing context of what they're noting.
+            .overlay {
+                if showDocNoteEditor {
+                    sidePeekJournalOverlay
+                        .transition(.identity)
+                }
             }
+            .animation(.easeInOut(duration: 0.25), value: showDocNoteEditor)
             .onChange(of: isEditing) { _, editing in
                 if editing {
                     editorActions.onRequestComment = { showEditorComment = true }
@@ -588,6 +595,52 @@ struct TranscriptDetailView: View {
                         .fontWeight(.semibold)
                         .foregroundStyle(Color.accentColor)
                 }
+            }
+        }
+    }
+
+    /// Side-peek overlay used in place of a sheet/push for the document-notes
+    /// journal. The panel sits flush against the trailing edge and caps at 82% of
+    /// screen width — leaving an ~18% strip of the transcript visible on the left
+    /// for spatial context. Tapping that strip dismisses the panel.
+    @ViewBuilder
+    private var sidePeekJournalOverlay: some View {
+        GeometryReader { proxy in
+            let panelWidth = min(proxy.size.width * 0.82, 380)
+            ZStack(alignment: .trailing) {
+                // Dim the visible transcript strip enough that focus moves to the
+                // panel without losing the source material entirely.
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture { showDocNoteEditor = false }
+                    .transition(.opacity)
+
+                // The panel itself wraps the journal view in its own NavigationStack
+                // so its toolbar (title + add button + dismiss) renders correctly even
+                // though we're not pushing this onto the parent's navigation.
+                NavigationStack {
+                    DocumentNotesJournalSheet(
+                        entry: $entry,
+                        vm: vm,
+                        onDismiss: { showDocNoteEditor = false }
+                    )
+                }
+                .frame(width: panelWidth)
+                .frame(maxHeight: .infinity)
+                .background(Color(red: 0.10, green: 0.12, blue: 0.16))
+                .shadow(color: .black.opacity(0.4), radius: 18, x: -6, y: 0)
+                .transition(.move(edge: .trailing))
+                // Swipe-right anywhere on the panel dismisses it — matches the
+                // gesture iOS uses to dismiss sheets.
+                .gesture(
+                    DragGesture(minimumDistance: 24)
+                        .onEnded { value in
+                            if value.translation.width > 60 {
+                                showDocNoteEditor = false
+                            }
+                        }
+                )
             }
         }
     }
