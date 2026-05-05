@@ -1,12 +1,14 @@
 import SwiftUI
 
-/// Mini-journal sheet for a transcript's collection of `DocumentNote`s. Lists every
+/// Mini-journal view for a transcript's collection of `DocumentNote`s. Pushed onto
+/// the parent's NavigationStack via `.navigationDestination(isPresented:)`, so it
+/// slides in from the right just like a standard list-detail navigation. Lists every
 /// note attached to the entry, sorted with the pinned note (if any) first and the
 /// rest newest-first by `updatedAt`. Tap a row to inline-expand the editor; swipe
 /// for pin/unpin and delete.
 ///
 /// "Auto-discard empty" rule: notes added via the `+` toolbar button that are never
-/// edited (text stays empty) are removed when the sheet dismisses, so the journal
+/// edited (text stays empty) are removed when the view dismisses, so the journal
 /// doesn't accumulate orphan timestamped blanks.
 struct DocumentNotesJournalSheet: View {
     @Binding var entry: TranscriptEntry
@@ -29,35 +31,32 @@ struct DocumentNotesJournalSheet: View {
     private static let sheetBackground = Color(red: 0.10, green: 0.12, blue: 0.16)
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Self.sheetBackground.ignoresSafeArea()
-                content
-            }
-            .navigationTitle("Notes")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { toolbarContent }
-            .toolbarBackground(Self.sheetBackground, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .preferredColorScheme(.dark)
-            .alert("Delete this note?", isPresented: deleteConfirmationBinding) {
-                Button("Cancel", role: .cancel) { pendingDelete = nil }
-                Button("Delete", role: .destructive) {
-                    if let note = pendingDelete {
-                        vm.removeDocumentNote(entry, noteID: note.id)
-                        addedEmptyIDs.remove(note.id)
-                        if expandedID == note.id { expandedID = nil }
-                        // Pull the latest version of the entry back so this sheet's
-                        // local @Binding sees the deletion.
-                        if let updated = vm.history.first(where: { $0.id == entry.id }) {
-                            entry = updated
-                        }
+        ZStack {
+            Self.sheetBackground.ignoresSafeArea()
+            content
+        }
+        .navigationTitle("Notes")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { toolbarContent }
+        .toolbarBackground(Self.sheetBackground, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .alert("Delete this note?", isPresented: deleteConfirmationBinding) {
+            Button("Cancel", role: .cancel) { pendingDelete = nil }
+            Button("Delete", role: .destructive) {
+                if let note = pendingDelete {
+                    vm.removeDocumentNote(entry, noteID: note.id)
+                    addedEmptyIDs.remove(note.id)
+                    if expandedID == note.id { expandedID = nil }
+                    // Pull the latest version of the entry back so the local @Binding
+                    // sees the deletion.
+                    if let updated = vm.history.first(where: { $0.id == entry.id }) {
+                        entry = updated
                     }
-                    pendingDelete = nil
                 }
-            } message: {
-                Text("This note has content. Deleting it can't be undone.")
+                pendingDelete = nil
             }
+        } message: {
+            Text("This note has content. Deleting it can't be undone.")
         }
         .onDisappear { pruneEmptyAdded() }
     }
@@ -209,10 +208,8 @@ struct DocumentNotesJournalSheet: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            Button("Done") { dismiss() }
-                .foregroundStyle(Color.accentColor)
-        }
+        // No leading "Done" button — the navigation back chevron handles dismissal
+        // now that this view is pushed via .navigationDestination instead of a sheet.
         ToolbarItem(placement: .topBarTrailing) {
             Button {
                 addNewNote()

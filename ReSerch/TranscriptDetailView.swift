@@ -88,13 +88,11 @@ struct TranscriptDetailView: View {
                     editorActions.insertComment(comment)
                 }
             }
-            .sheet(isPresented: $showDocNoteEditor) {
+            .navigationDestination(isPresented: $showDocNoteEditor) {
+                // Pushed onto the parent NavigationStack so the journal slides in
+                // from the right just like a standard list-detail navigation. Back
+                // chevron handles dismissal.
                 DocumentNotesJournalSheet(entry: $entry, vm: vm)
-                    // Half-sheet at first, draggable up to full. Keeps the transcript
-                    // visible behind the journal so the user can write grounded
-                    // reflections without losing the source material on screen.
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
             }
             .onChange(of: isEditing) { _, editing in
                 if editing {
