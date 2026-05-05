@@ -90,17 +90,29 @@ struct TranscriptDetailView: View {
             }
             // Side-peek overlay for the document-notes journal. iOS doesn't ship a
             // native "trailing peek" presentation (sheets come from the bottom,
-            // pushes go full-screen), so we render the panel as a manual overlay
-            // and animate the showDocNoteEditor flag. Width caps at ~80% of screen
-            // so the transcript stays visible on the left strip — user taps that
-            // dimmed area to dismiss without losing context of what they're noting.
+            // pushes go full-screen), so we split the overlay into two siblings:
+            //   1. A full-screen dimmed backdrop that fades in/out (.opacity)
+            //   2. A trailing-aligned panel that slides in/out (.move(edge: .trailing))
+            // Two separate .overlay blocks keep their transitions independent — putting
+            // both inside one overlay made SwiftUI animate them as a single unit, which
+            // either killed the slide or made the backdrop slide too. This shape
+            // matches how Notion and Things do their trailing detail panes on iPad.
             .overlay {
                 if showDocNoteEditor {
-                    sidePeekJournalOverlay
-                        .transition(.identity)
+                    Color.black.opacity(0.45)
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture { showDocNoteEditor = false }
+                        .transition(.opacity)
                 }
             }
-            .animation(.easeInOut(duration: 0.25), value: showDocNoteEditor)
+            .overlay(alignment: .trailing) {
+                if showDocNoteEditor {
+                    sidePeekPanel
+                        .transition(.move(edge: .trailing))
+                }
+            }
+            .animation(.easeInOut(duration: 0.28), value: showDocNoteEditor)
             .onChange(of: isEditing) { _, editing in
                 if editing {
                     editorActions.onRequestComment = { showEditorComment = true }
@@ -599,49 +611,38 @@ struct TranscriptDetailView: View {
         }
     }
 
-    /// Side-peek overlay used in place of a sheet/push for the document-notes
-    /// journal. The panel sits flush against the trailing edge and caps at 82% of
-    /// screen width — leaving an ~18% strip of the transcript visible on the left
-    /// for spatial context. Tapping that strip dismisses the panel.
+    /// The trailing panel for the side-peek. Caps at 82% of screen width or 380pt,
+    /// whichever is smaller — leaves an ~18% strip of the transcript visible on
+    /// the left for spatial context.
     @ViewBuilder
-    private var sidePeekJournalOverlay: some View {
+    private var sidePeekPanel: some View {
         GeometryReader { proxy in
             let panelWidth = min(proxy.size.width * 0.82, 380)
-            ZStack(alignment: .trailing) {
-                // Dim the visible transcript strip enough that focus moves to the
-                // panel without losing the source material entirely.
-                Color.black.opacity(0.45)
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .onTapGesture { showDocNoteEditor = false }
-                    .transition(.opacity)
-
-                // The panel itself wraps the journal view in its own NavigationStack
-                // so its toolbar (title + add button + dismiss) renders correctly even
-                // though we're not pushing this onto the parent's navigation.
-                NavigationStack {
-                    DocumentNotesJournalSheet(
-                        entry: $entry,
-                        vm: vm,
-                        onDismiss: { showDocNoteEditor = false }
-                    )
-                }
-                .frame(width: panelWidth)
-                .frame(maxHeight: .infinity)
-                .background(Color(red: 0.10, green: 0.12, blue: 0.16))
-                .shadow(color: .black.opacity(0.4), radius: 18, x: -6, y: 0)
-                .transition(.move(edge: .trailing))
-                // Swipe-right anywhere on the panel dismisses it — matches the
-                // gesture iOS uses to dismiss sheets.
-                .gesture(
-                    DragGesture(minimumDistance: 24)
-                        .onEnded { value in
-                            if value.translation.width > 60 {
-                                showDocNoteEditor = false
-                            }
-                        }
+            // The panel wraps the journal view in its own NavigationStack so its
+            // toolbar (title + add button + Done) renders correctly even though
+            // we're not pushing this onto the parent's navigation.
+            NavigationStack {
+                DocumentNotesJournalSheet(
+                    entry: $entry,
+                    vm: vm,
+                    onDismiss: { showDocNoteEditor = false }
                 )
             }
+            .frame(width: panelWidth)
+            .frame(maxHeight: .infinity)
+            .background(Color(red: 0.10, green: 0.12, blue: 0.16))
+            .shadow(color: .black.opacity(0.4), radius: 18, x: -6, y: 0)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            // Swipe-right anywhere on the panel dismisses it — matches iOS's
+            // sheet-dismiss gesture.
+            .gesture(
+                DragGesture(minimumDistance: 24)
+                    .onEnded { value in
+                        if value.translation.width > 60 {
+                            showDocNoteEditor = false
+                        }
+                    }
+            )
         }
     }
 
