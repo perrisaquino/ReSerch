@@ -220,10 +220,14 @@ struct DocumentNotesJournalSheet: View {
                 Label("Delete", systemImage: "trash")
             }
         } label: {
+            // 32×32 hit area matches Apple Settings' accessory-control sizing —
+            // sub-44 is acceptable for tightly-clustered list-row controls per
+            // HIG. The visible glyph stays small (14pt) so it doesn't dominate
+            // the row visually.
             Image(systemName: "ellipsis")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.55))
-                .frame(width: 28, height: 24)
+                .frame(width: 32, height: 32)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
