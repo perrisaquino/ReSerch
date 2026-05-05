@@ -17,6 +17,7 @@ struct SettingsView: View {
     @State private var exportShareItem: URL?
     @State private var exportInProgress = false
     @State private var exportError: String?
+    @State private var showBackupInfo = false
     @Environment(\.dismiss) private var dismiss
 
     private static let debugUnlockTaps = 7
@@ -25,7 +26,7 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 accountSection
-                outputSection
+                exportSection
                 highlightColorsSection
                 backupSection
                 feedbackSection
@@ -89,11 +90,10 @@ struct SettingsView: View {
     }
 
     /// All preferences that affect what shows up in the exported transcript:
-    /// default format, carousel image embedding, and video saving. Grouping these
-    /// together keeps the user from scrolling through three single-toggle sections.
+    /// default format, carousel image embedding, and video saving.
     @ViewBuilder
-    private var outputSection: some View {
-        Section {
+    private var exportSection: some View {
+        Section("Export") {
             Picker("Default Format", selection: Binding(
                 get: { prefs.richTextMode ? 1 : 0 },
                 set: { newValue in
@@ -109,10 +109,6 @@ struct SettingsView: View {
                 get: { prefs.saveVideoToCameraRoll },
                 set: { prefs.saveVideoToCameraRoll = $0; prefs.save() }
             ))
-        } header: {
-            Text("Output")
-        } footer: {
-            Text("Format applies when copying or sharing — switchable per transcript inside MD / Rich tabs.")
         }
     }
 
@@ -136,11 +132,13 @@ struct SettingsView: View {
 
     /// Combined Sync + Export section. Both speak to the same underlying concern
     /// (your data living in more than one place) and live better as a single
-    /// section than as two adjacent ones each with their own header + footer.
+    /// section than as two adjacent ones. Status text sits inside the iCloud
+    /// Sync row's label rather than as a standalone caption row, so the toggle
+    /// reads as one cohesive control instead of split across two list rows.
     @ViewBuilder
     private var backupSection: some View {
         Section {
-            Toggle("iCloud Sync", isOn: Binding(
+            Toggle(isOn: Binding(
                 get: { iCloudSyncEnabled },
                 set: { newValue in
                     iCloudSyncEnabled = newValue
@@ -149,15 +147,14 @@ struct SettingsView: View {
                         Task { await iCloudSyncService.shared.migrateLocalToCloudIfNeeded() }
                     }
                 }
-            ))
-            HStack {
-                Text(syncStatusText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("iCloud Sync")
+                    Text(syncStatusText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
 
             Button {
                 Task { await runExport() }
@@ -179,9 +176,24 @@ struct SettingsView: View {
                     .foregroundStyle(.red)
             }
         } header: {
-            Text("Backup")
-        } footer: {
-            Text("Sync backs up transcripts and notebooks to your iCloud account so they survive uninstalling and reinstalling. Export saves everything as a single ZIP file.")
+            HStack {
+                Text("Backup")
+                Spacer()
+                Button {
+                    showBackupInfo = true
+                } label: {
+                    Image(systemName: "info.circle")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 14))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("About iCloud Sync and Export")
+            }
+        }
+        .alert("Backup", isPresented: $showBackupInfo) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("iCloud Sync backs up your transcripts and notebooks to your iCloud account and keeps them in sync across all your devices signed in to the same Apple ID. Everything survives uninstalling and reinstalling.\n\nExport saves a ZIP of every transcript, notebook, and carousel image so you can keep your own copy anywhere.")
         }
     }
 
