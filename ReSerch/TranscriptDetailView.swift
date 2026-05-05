@@ -21,6 +21,15 @@ struct TranscriptDetailView: View {
     /// matching slideIndex.
     @State private var pendingHighlightSlideIndex: Int?
     @State private var showNoteInput = false
+    /// Which tab is selected inside the side-peek inspector. Mirrors the
+    /// "Info / Notebook" segmented control at the top of the panel.
+    @State private var sidePeekTab: SidePeekTab = .info
+    /// Which note (if any) is currently expanded into edit mode inside the
+    /// side-peek panel. Distinct from `expandedID` on the legacy journal sheet
+    /// because the side-peek and legacy sheet are separate UI surfaces.
+    @State private var sidePeekExpandedNoteID: UUID?
+
+    enum SidePeekTab: Hashable { case info, notebook }
     @State private var showEditorComment = false
     @State private var showDocNoteEditor = false
     @State private var gate = ExportGate.shared
@@ -612,12 +621,10 @@ struct TranscriptDetailView: View {
         }
     }
 
-    /// The trailing peek panel. Width caps at 82% of screen / 380pt — leaves an
-    /// ~18% strip of the transcript visible. No nested NavigationStack: the panel
-    /// renders its own custom top bar so we can put a vertical drag indicator on
-    /// the leading edge (Apple Notes-style affordance for "this slides off").
-    /// Edges flush against the screen, no rounded corners — matches iPadOS's
-    /// trailing inspector pane convention.
+    /// The trailing peek panel — restructured to match a reading-app inspector
+    /// pattern (segmented tabs at top, sectioned content below, no nav-bar chrome).
+    /// Width caps at 82% of screen / 380pt; flush edges; vertical drag indicator
+    /// on the leading edge.
     @ViewBuilder
     private var sidePeekPanel: some View {
         GeometryReader { proxy in
@@ -625,15 +632,25 @@ struct TranscriptDetailView: View {
             HStack(spacing: 0) {
                 Spacer()
                 ZStack(alignment: .leading) {
-                    // Body
                     VStack(spacing: 0) {
-                        sidePeekTopBar
-                        DocumentNotesJournalSheet(
-                            entry: $entry,
-                            vm: vm,
-                            onDismiss: { showDocNoteEditor = false },
-                            chromeless: true
-                        )
+                        sidePeekTabBar
+                            .padding(.top, statusBarTopInset() + 12)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 18)
+
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 24) {
+                                if sidePeekTab == .info {
+                                    documentNoteSidePeekSection
+                                    highlightsSidePeekSection
+                                } else {
+                                    notebookSidePeekSection
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 24)
+                        }
+                        .scrollIndicators(.visible)
                     }
                     .frame(width: panelWidth)
                     .frame(maxHeight: .infinity)
@@ -641,7 +658,6 @@ struct TranscriptDetailView: View {
 
                     // Vertical drag indicator on the leading edge — mirrors the
                     // horizontal handle iOS puts on the top of bottom sheets.
-                    // Visually signals "this surface can be dismissed by dragging."
                     Capsule()
                         .fill(Color.white.opacity(0.22))
                         .frame(width: 4, height: 36)
@@ -649,10 +665,8 @@ struct TranscriptDetailView: View {
                 }
                 .shadow(color: .black.opacity(0.4), radius: 18, x: -6, y: 0)
             }
-            .ignoresSafeArea()  // covers status bar + parent nav bar — no leak
+            .ignoresSafeArea()
             .gesture(
-                // Swipe-right anywhere on the panel dismisses it. Matches iOS's
-                // sheet-dismiss feel (drag-the-handle).
                 DragGesture(minimumDistance: 24)
                     .onEnded { value in
                         if value.translation.width > 60 {
@@ -663,41 +677,293 @@ struct TranscriptDetailView: View {
         }
     }
 
-    /// Custom top bar inside the panel — replaces the nested NavigationStack's
-    /// nav bar so we control the layout precisely. Drag indicator sits inside
-    /// `sidePeekPanel`'s ZStack on the leading edge, separately. This bar shows
-    /// the title and the + button, nothing else (no "Done" — the swipe + tap-
-    /// outside dismiss handles that, per Apple's modal-dismissal patterns).
-    private var sidePeekTopBar: some View {
-        HStack {
-            Text("Notes")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.95))
-            Spacer()
-            Button {
-                NotificationCenter.default.post(name: .reserchAddNote, object: nil)
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel("Add note")
+    /// Two-segment Picker at the top of the panel — switches between an Info
+    /// tab (document notes + highlights for this transcript) and a Notebook tab
+    /// (which notebook this transcript is filed in, with option to move).
+    private var sidePeekTabBar: some View {
+        Picker("View", selection: $sidePeekTab) {
+            Text("Info").tag(SidePeekTab.info)
+            Text("Notebook \(entry.result.annotations.count)").tag(SidePeekTab.notebook)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, statusBarTopInset() + 8)
-        .padding(.bottom, 10)
-        .frame(maxWidth: .infinity)
+        .pickerStyle(.segmented)
+    }
+
+    // MARK: - Info tab content
+
+    private var documentNoteSidePeekSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Document Note")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white.opacity(0.55))
+                .textCase(.uppercase)
+                .tracking(0.6)
+
+            if entry.documentNotes.isEmpty {
+                // Single full-width pill button — matches the reference layout.
+                Button {
+                    let newID = vm.addDocumentNote(entry, text: "")
+                    refreshEntry()
+                    if let id = newID {
+                        sidePeekExpandedNoteID = id
+                    }
+                } label: {
+                    Text("Add document note")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            Capsule()
+                                .fill(Color.white.opacity(0.06))
+                        )
+                }
+                .buttonStyle(.plain)
+            } else {
+                // Show every note as a card (matches the reference's "fill the
+                // section with content once it exists" pattern).
+                ForEach(sortedSidePeekNotes) { note in
+                    sidePeekNoteCard(note)
+                }
+                Button {
+                    let newID = vm.addDocumentNote(entry, text: "")
+                    refreshEntry()
+                    if let id = newID {
+                        sidePeekExpandedNoteID = id
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Add another note")
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    .foregroundStyle(.white.opacity(0.65))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(
+                        Capsule()
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var highlightsSidePeekSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Highlights")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white.opacity(0.55))
+                .textCase(.uppercase)
+                .tracking(0.6)
+
+            if entry.result.annotations.isEmpty {
+                Text("Long-press text in the transcript to highlight or comment on it.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .padding(.vertical, 8)
+            } else {
+                ForEach(entry.result.annotations) { ann in
+                    sidePeekHighlightCard(ann)
+                }
+            }
+        }
+    }
+
+    private var notebookSidePeekSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Filed In")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white.opacity(0.55))
+                .textCase(.uppercase)
+                .tracking(0.6)
+
+            if let notebookID = entry.notebookID,
+               let nb = vm.notebooks.first(where: { $0.id == notebookID }) {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(nb.color)
+                        .frame(width: 10, height: 10)
+                    Text(nb.name)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.92))
+                    Spacer()
+                }
+                .padding(.vertical, 14)
+                .padding(.horizontal, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.white.opacity(0.04))
+                )
+            } else {
+                Text("Unfiled — this transcript isn't in a notebook yet.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .padding(.vertical, 8)
+            }
+        }
+    }
+
+    // MARK: - Side-peek card components
+
+    private var sortedSidePeekNotes: [DocumentNote] {
+        let pinned = entry.documentNotes.filter { $0.isPinned }
+        let unpinned = entry.documentNotes.filter { !$0.isPinned }
+            .sorted { $0.updatedAt > $1.updatedAt }
+        return pinned + unpinned
+    }
+
+    @ViewBuilder
+    private func sidePeekNoteCard(_ note: DocumentNote) -> some View {
+        let expanded = sidePeekExpandedNoteID == note.id
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                if note.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.yellow.opacity(0.85))
+                }
+                Text(sidePeekTimestamp(for: note))
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.45))
+                Spacer()
+                if expanded {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) { sidePeekExpandedNoteID = nil }
+                    } label: {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                } else {
+                    Menu {
+                        Button {
+                            if note.isPinned {
+                                vm.unpinDocumentNote(entry, noteID: note.id)
+                            } else {
+                                vm.pinDocumentNote(entry, noteID: note.id)
+                            }
+                            refreshEntry()
+                        } label: {
+                            Label(
+                                note.isPinned ? "Unpin" : "Pin to top",
+                                systemImage: note.isPinned ? "pin.slash" : "pin"
+                            )
+                        }
+                        Button(role: .destructive) {
+                            vm.removeDocumentNote(entry, noteID: note.id)
+                            refreshEntry()
+                            if sidePeekExpandedNoteID == note.id {
+                                sidePeekExpandedNoteID = nil
+                            }
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+
+            if expanded {
+                let binding = Binding<String>(
+                    get: { entry.documentNotes.first(where: { $0.id == note.id })?.text ?? "" },
+                    set: { newValue in
+                        vm.updateDocumentNote(entry, noteID: note.id, text: newValue)
+                        refreshEntry()
+                    }
+                )
+                TextEditor(text: binding)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 110, maxHeight: 240)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .tint(Color.accentColor)
+            } else {
+                Text(note.text.isEmpty ? "Empty note — tap to edit" : note.text)
+                    .font(.system(size: 15))
+                    .foregroundStyle(note.text.isEmpty ? .white.opacity(0.35) : .white.opacity(0.92))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
         .background(
-            Color(red: 0.10, green: 0.12, blue: 0.16)
-                .overlay(
-                    Rectangle()
-                        .fill(Color.white.opacity(0.06))
-                        .frame(height: 0.5)
-                        .frame(maxHeight: .infinity, alignment: .bottom)
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.white.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(
+                    note.isPinned ? Color.yellow.opacity(0.22) : Color.white.opacity(0.07),
+                    lineWidth: 1
                 )
         )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                sidePeekExpandedNoteID = expanded ? nil : note.id
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sidePeekHighlightCard(_ ann: Annotation) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Quoted highlight text — left bar + serif-feeling weight to read
+            // as a quotation, like Readwise / Books inspector cards.
+            HStack(alignment: .top, spacing: 10) {
+                Rectangle()
+                    .fill(Color.yellow.opacity(0.45))
+                    .frame(width: 3)
+                Text(ann.text)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if !ann.comment.isEmpty {
+                Text(ann.comment)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.65))
+                    .padding(.leading, 13) // line up with quoted text indent
+                    .padding(.top, 4)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
+        )
+    }
+
+    private func sidePeekTimestamp(for note: DocumentNote) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: note.updatedAt, relativeTo: Date())
+    }
+
+    private func refreshEntry() {
+        if let updated = vm.history.first(where: { $0.id == entry.id }) {
+            entry = updated
+        }
     }
 
     /// Best-effort top safe-area inset (status bar + dynamic island). Used to
