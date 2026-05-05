@@ -582,8 +582,7 @@ struct TranscriptDetailView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     editorActions.dismissKeyboard()
-                    entry.result.transcript = editingText
-                    vm.updateEntry(entry)
+                    saveEditedTranscript()
                     isEditing = false
                 } label: {
                     Text("Done Editing")
@@ -593,6 +592,80 @@ struct TranscriptDetailView: View {
                 }
             }
         }
+    }
+
+    /// Persists the editor's contents. For regular video transcripts this just writes
+    /// the markdown blob back to `entry.result.transcript`. For carousels we ALSO
+    /// parse the blob into per-slide text and update each slide's `recognizedText` —
+    /// the carousel detail view (CarouselCleanTranscriptView) renders from the
+    /// per-slide field, so without this propagation the user's edits would silently
+    /// vanish from the main view despite being saved to disk.
+    private func saveEditedTranscript() {
+        entry.result.transcript = editingText
+
+        if isCarouselTranscript, let slides = entry.result.carouselSlides {
+            let perSlide = Self.parseSlideTexts(from: editingText, expectedCount: slides.count)
+            entry.result.carouselSlides = slides.map { slide in
+                var copy = slide
+                if let updated = perSlide[slide.index] {
+                    copy.recognizedText = updated
+                }
+                return copy
+            }
+        }
+
+        vm.updateEntry(entry)
+    }
+
+    /// Parses an edited carousel-transcript markdown blob back into a [slideIndex: text]
+    /// map. The format CarouselNoteFormatter / migrateCarouselTranscriptsV2 produces
+    /// is `### Slide N` headings followed by an optional `![[file.jpg]]` embed line
+    /// followed by the slide's text until the next heading. This parser matches that
+    /// shape and is idempotent against the formatter — round-tripping a transcript
+    /// through edit + save yields the same per-slide content.
+    private static func parseSlideTexts(from markdown: String, expectedCount: Int) -> [Int: String] {
+        var result: [Int: String] = [:]
+        // Split on the slide heading. The heading pattern is "### Slide N" with N a
+        // 1-based number; we capture the number for the dictionary key.
+        let lines = markdown.components(separatedBy: "\n")
+        var currentIndex: Int?
+        var buffer: [String] = []
+
+        func flush() {
+            guard let i = currentIndex else { return }
+            let text = buffer
+                .drop { $0.trimmingCharacters(in: .whitespaces).hasPrefix("![[") } // strip image embed
+                .map { $0 }
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // The "*[no text detected]*" placeholder shouldn't be persisted as recognized
+            // text — leave the slide's text empty so future renders show the placeholder
+            // again from CarouselCleanTranscriptView's empty-text path.
+            if text == "*[no text detected]*" {
+                result[i] = ""
+            } else {
+                result[i] = text
+            }
+        }
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.lowercased().hasPrefix("### slide ") {
+                flush()
+                let remainder = trimmed.dropFirst("### slide ".count).trimmingCharacters(in: .whitespaces)
+                // 1-based "Slide 1" → 0-based dict key
+                if let n = Int(remainder), n >= 1 {
+                    currentIndex = n - 1
+                    buffer.removeAll()
+                } else {
+                    currentIndex = nil
+                }
+            } else if currentIndex != nil {
+                buffer.append(line)
+            }
+        }
+        flush()
+        return result
     }
 
     // MARK: - Bottom Bar

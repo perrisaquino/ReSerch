@@ -97,7 +97,10 @@ struct TranscriptCarouselSlide: Codable, Identifiable, Hashable {
     /// every image reference after a fresh install. Resolution to a real URL happens
     /// at display time via `displayURL`, which checks the active sync directory.
     let localImageFilename: String?
-    let recognizedText: String?  // empty string if OCR ran but found nothing; nil if OCR failed
+    /// Mutable so the pencil-edit flow can write back per-slide text after the user
+    /// fixes OCR mistakes or adds **bold** / ==highlight== markdown syntax. Empty
+    /// string = OCR ran but found nothing; nil = OCR failed.
+    var recognizedText: String?
 
     var id: Int { index }
 
