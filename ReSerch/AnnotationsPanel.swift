@@ -20,18 +20,22 @@ struct AnnotationsPanel: View {
     @Binding var annotations: [Annotation]
     var transcriptText: String = ""
     @Environment(\.dismiss) private var dismiss
+    @State private var expandedIDs: Set<String> = []
 
     // Unified display model — editor-parsed or in-app selection
     private struct DisplayAnnotation: Identifiable {
-        let id = UUID()
+        let id: String      // stable across re-renders
         let text: String
         let comment: String
-        let inAppId: UUID? // non-nil = swipe-delete enabled
+        let inAppId: UUID?  // non-nil = swipe-delete enabled
+        let createdAt: Date?
     }
 
     private var allAnnotations: [DisplayAnnotation] {
-        parseEditorHighlights(from: transcriptText)
-        + annotations.map { DisplayAnnotation(text: $0.text, comment: $0.comment, inAppId: $0.id) }
+        let inApp = annotations
+            .sorted { $0.createdAt > $1.createdAt }
+            .map { DisplayAnnotation(id: $0.id.uuidString, text: $0.text, comment: $0.comment, inAppId: $0.id, createdAt: $0.createdAt) }
+        return inApp + parseEditorHighlights(from: transcriptText)
     }
 
     // Parses ==text==[^N] / [^N]: comment pairs embedded in editor transcript
@@ -54,11 +58,14 @@ struct AnnotationsPanel: View {
         return refRx.matches(in: text, range: full).compactMap { m in
             guard m.range(at: 1).location != NSNotFound,
                   m.range(at: 2).location != NSNotFound else { return nil }
+            let highlightText = ns.substring(with: m.range(at: 1))
             let n = Int(ns.substring(with: m.range(at: 2))) ?? 0
             return DisplayAnnotation(
-                text: ns.substring(with: m.range(at: 1)),
+                id: "ed-\(abs(highlightText.hashValue))",
+                text: highlightText,
                 comment: footnotes[n] ?? "",
-                inAppId: nil
+                inAppId: nil,
+                createdAt: nil
             )
         }
     }
@@ -118,62 +125,108 @@ struct AnnotationsPanel: View {
                         }
                     }
             }
+            // Bottom clearance so last card clears the home indicator
+            Color.clear
+                .frame(height: 48)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(Color.panelBg)
+        .safeAreaInset(edge: .bottom) { Color.clear.frame(height: 0) }
     }
 
     // MARK: Card
 
     private func card(_ ann: DisplayAnnotation) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let isExpanded = expandedIDs.contains(ann.id)
 
-            // ── Highlight block ──────────────────────────────
-            Text(ann.text)
-                .font(.body)
-                .foregroundStyle(Color.textPrimary)
-                .lineSpacing(5)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        return Button {
+            withAnimation(.spring(duration: 0.25)) {
+                if isExpanded { expandedIDs.remove(ann.id) }
+                else          { expandedIDs.insert(ann.id) }
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 0) {
+
+                // ── Highlight block ──────────────────────────────
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(ann.text)
+                        .font(.body)
+                        .foregroundStyle(Color.textPrimary)
+                        .lineSpacing(5)
+                        .lineLimit(isExpanded ? nil : 3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if isExpanded, let date = ann.createdAt {
+                        Text(date, style: .relative)
+                            .font(.caption2)
+                            .foregroundStyle(Color.textLabel)
+                            .padding(.top, 8)
+                    }
+                }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
                 .background(Color.hlTint)
 
-            // ── Note block (if present) ──────────────────────
-            if !ann.comment.isEmpty {
-                Rectangle()
-                    .fill(Color.hlBorder)
-                    .frame(height: 1)
-
-                HStack(alignment: .top, spacing: 12) {
+                // ── Note block (visible when expanded) ──────────
+                if isExpanded && !ann.comment.isEmpty {
                     Rectangle()
-                        .fill(Color.noteAccent)
-                        .frame(width: 2)
-                        .padding(.vertical, 2)
+                        .fill(Color.hlBorder)
+                        .frame(height: 1)
 
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("NOTE")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(Color.noteAccent.opacity(0.75))
-                            .tracking(1.2)
+                    HStack(alignment: .top, spacing: 12) {
+                        Rectangle()
+                            .fill(Color.noteAccent)
+                            .frame(width: 2)
+                            .padding(.vertical, 2)
 
-                        Text(ann.comment)
-                            .font(.subheadline)
-                            .foregroundStyle(Color.textNote)
-                            .lineSpacing(4)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("NOTE")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(Color.noteAccent.opacity(0.75))
+                                .tracking(1.2)
+
+                            Text(ann.comment)
+                                .font(.subheadline)
+                                .foregroundStyle(Color.textNote)
+                                .lineSpacing(4)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(Color.noteBg)
+                }
+
+                // ── Expand / collapse footer ─────────────────────
+                HStack(spacing: 6) {
+                    if !ann.comment.isEmpty && !isExpanded {
+                        Image(systemName: "quote.bubble")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Color.noteAccent.opacity(0.65))
+                        Text("Note")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.noteAccent.opacity(0.65))
+                    }
+                    Spacer()
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.textLabel)
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background(Color.noteBg)
+                .padding(.vertical, 7)
+                .background(Color.hlTint.opacity(0.6))
             }
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.hlBorder, lineWidth: 1)
+            )
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.hlBorder, lineWidth: 1)
-        )
+        .buttonStyle(.plain)
+        .animation(.spring(duration: 0.25), value: isExpanded)
     }
 
     // MARK: Empty state
@@ -207,11 +260,19 @@ struct AnnotationsPanel: View {
 
 struct NoteInputSheet: View {
     let highlightedText: String
+    let initialComment: String
     let onSave: (String) -> Void
 
-    @State private var comment = ""
+    @State private var comment: String
     @Environment(\.dismiss) private var dismiss
     @FocusState private var focused: Bool
+
+    init(highlightedText: String, initialComment: String = "", onSave: @escaping (String) -> Void) {
+        self.highlightedText = highlightedText
+        self.initialComment = initialComment
+        self.onSave = onSave
+        self._comment = State(initialValue: initialComment)
+    }
 
     var body: some View {
         NavigationStack {
@@ -275,7 +336,7 @@ struct NoteInputSheet: View {
             .padding(.horizontal, 20)
             .padding(.top, 24)
             .background(Color.panelBg.ignoresSafeArea())
-            .navigationTitle("Add Note")
+            .navigationTitle(initialComment.isEmpty ? "Add Note" : "Edit Note")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

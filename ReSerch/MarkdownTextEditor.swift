@@ -150,8 +150,13 @@ final class MarkdownEditorActions {
                 tv.selectedTextRange = tv.textRange(from: pos, to: pos)
             }
         } else {
-            let selected = tv.text(in: range) ?? ""
+            let selected  = tv.text(in: range) ?? ""
+            let nsRange   = tv.selectedRange
             tv.replace(range, withText: prefix + selected + suffix)
+            // Reselect just the content (between markers) so chained formatting works
+            let prefixLen  = (prefix   as NSString).length
+            let contentLen = (selected as NSString).length
+            tv.selectedRange = NSRange(location: nsRange.location + prefixLen, length: contentLen)
         }
         refreshUndoState()
     }
@@ -398,7 +403,6 @@ private struct MarkdownToolbar: View {
         FormatItem(icon: .highlight,                                               prefix: "==", suffix: "=="),
         FormatItem(icon: .systemImage("italic"),                                   prefix: "*",  suffix: "*"),
         FormatItem(icon: .systemImage("strikethrough"),                           prefix: "~~", suffix: "~~"),
-        FormatItem(icon: .systemImage("chevron.left.forwardslash.chevron.right"), prefix: "`",  suffix: "`"),
     ]
 
     var body: some View {

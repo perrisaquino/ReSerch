@@ -20,6 +20,11 @@ struct TranscriptDetailView: View {
     /// highlight came from a carousel slide so the eventual Annotation gets the
     /// matching slideIndex.
     @State private var pendingHighlightSlideIndex: Int?
+    /// Set when the user is editing the comment on an existing annotation (from
+    /// AnnotableTranscriptView's "Add Note" on text that's already highlighted).
+    /// nil = creating a new annotation.
+    @State private var pendingExistingAnnotationId: UUID? = nil
+    @State private var pendingExistingComment: String = ""
     @State private var showNoteInput = false
     /// Which tab is selected inside the side-peek inspector. Mirrors the
     /// "Info / Notebook" segmented control at the top of the panel.
@@ -34,6 +39,7 @@ struct TranscriptDetailView: View {
     @State private var showDocNoteEditor = false
     @State private var gate = ExportGate.shared
     @State private var showPaywall = false
+    @State private var showMoveToNotebook = false
 
     private var youTubeVideoId: String? {
         guard let url = URL(string: entry.result.url) else { return nil }
@@ -81,26 +87,41 @@ struct TranscriptDetailView: View {
                         .onDisappear { vm.updateEntry(entry) }
                 }
                 .sheet(isPresented: $showNoteInput) {
-                    NoteInputSheet(highlightedText: pendingHighlightText ?? "") { comment in
-                        let ann = Annotation(
-                            text: pendingHighlightText ?? "",
-                            comment: comment,
-                            offset: pendingHighlightOffset ?? 0,
-                            slideIndex: pendingHighlightSlideIndex
-                        )
-                        entry.result.annotations.append(ann)
-                        vm.updateEntry(entry)
-                        // Magic moment: first time the user makes a transcript "theirs" by
-                        // highlighting + commenting. Strong review trigger — they're emotionally
-                        // invested at this exact moment.
-                        if entry.result.annotations.count == 1 {
-                            ReviewPromptManager.shared.recordMilestone(.firstAnnotation)
+                    NoteInputSheet(highlightedText: pendingHighlightText ?? "", initialComment: pendingExistingComment) { comment in
+                        if let existingId = pendingExistingAnnotationId,
+                           let idx = entry.result.annotations.firstIndex(where: { $0.id == existingId }) {
+                            // Edit-in-place: update existing annotation's comment.
+                            entry.result.annotations[idx].comment = comment
+                        } else {
+                            let ann = Annotation(
+                                text: pendingHighlightText ?? "",
+                                comment: comment,
+                                offset: pendingHighlightOffset ?? 0,
+                                slideIndex: pendingHighlightSlideIndex
+                            )
+                            entry.result.annotations.append(ann)
+                            // Magic moment: first time the user makes a transcript "theirs" by
+                            // highlighting + commenting. Strong review trigger — they're emotionally
+                            // invested at this exact moment.
+                            if entry.result.annotations.count == 1 {
+                                ReviewPromptManager.shared.recordMilestone(.firstAnnotation)
+                            }
                         }
+                        pendingExistingAnnotationId = nil
+                        pendingExistingComment = ""
+                        vm.updateEntry(entry)
                     }
                 }
                 .sheet(isPresented: $showEditorComment) {
                     NoteInputSheet(highlightedText: editorActions.pendingCommentText) { comment in
                         editorActions.insertComment(comment)
+                    }
+                }
+                .sheet(isPresented: $showMoveToNotebook) {
+                    MoveToNotebookSheet(vm: vm, selectedIDs: [entry.id]) {
+                        if let updated = vm.history.first(where: { $0.id == entry.id }) {
+                            entry = updated
+                        }
                     }
                 }
                 .onChange(of: isEditing) { _, editing in
@@ -212,6 +233,14 @@ struct TranscriptDetailView: View {
                 .background(Color(red: 0.07, green: 0.09, blue: 0.13))
             }
         }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 50, coordinateSpace: .local)
+                .onEnded { value in
+                    let isLeftSwipe = value.translation.width < -80
+                    let isHorizontal = abs(value.translation.width) > abs(value.translation.height) * 2
+                    if isLeftSwipe && isHorizontal { showAnnotations = true }
+                }
+        )
     }
 
     private var dragHandle: some View {
@@ -587,9 +616,17 @@ struct TranscriptDetailView: View {
                         }
                     },
                     onAddNote: { text, offset in
-                        pendingHighlightText   = text
-                        pendingHighlightOffset = offset
-                        pendingHighlightSlideIndex = nil
+                        pendingHighlightText        = text
+                        pendingHighlightOffset      = offset
+                        pendingHighlightSlideIndex  = nil
+                        // Edit-in-place: if this text already has an annotation, prefill its comment
+                        if let existing = entry.result.annotations.first(where: { $0.text == text && $0.slideIndex == nil }) {
+                            pendingExistingAnnotationId = existing.id
+                            pendingExistingComment = existing.comment
+                        } else {
+                            pendingExistingAnnotationId = nil
+                            pendingExistingComment = ""
+                        }
                         showNoteInput = true
                     }
                 )
@@ -1164,6 +1201,18 @@ struct TranscriptDetailView: View {
                     Label("Copy Source URL", systemImage: "link")
                 }
                 .disabled(entry.result.url.isEmpty)
+            }
+
+            // Notebook button — assigns/moves this transcript to a notebook
+            Button {
+                showMoveToNotebook = true
+            } label: {
+                let inNotebook = entry.notebookID != nil
+                Image(systemName: inNotebook ? "folder.fill" : "folder.badge.plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(inNotebook ? Color.accentColor : Color(white: 0.72))
+                    .frame(width: 40, height: 40)
+                    .background(Color(white: 0.14), in: Circle())
             }
 
             // Share button — gated; presents activity sheet only after gate check
