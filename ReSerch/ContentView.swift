@@ -23,14 +23,14 @@ struct ContentView: View {
                 feedView
                 if !selectionMode { addButton }
             }
-            .navigationTitle("ReSerch")
+            .navigationTitle("Transcripts")
             .navigationBarTitleDisplayMode(.large)
             .toolbar { toolbarContent }
             .searchable(
                 text: $searchQuery,
                 isPresented: $searchIsPresented,
                 placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search transcripts, notes, captions"
+                prompt: "Search"
             )
             .safeAreaInset(edge: .bottom) {
                 if selectionMode && !selectedIDs.isEmpty { bulkBar }
