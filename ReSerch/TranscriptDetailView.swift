@@ -696,15 +696,18 @@ struct TranscriptDetailView: View {
                 }
             }
         } else {
-            // Notebook button — assigns/moves this transcript to a notebook
+            // Notebook button — assigns/moves this transcript to a notebook.
+            // When the transcript already lives in a notebook, the icon is tinted
+            // with that notebook's own color so the user can identify the notebook
+            // without opening the sheet.
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showMoveToNotebook = true
                 } label: {
-                    let inNotebook = entry.notebookID != nil
-                    Image(systemName: inNotebook ? "folder.fill" : "folder.badge.plus")
+                    let currentNotebook = vm.notebook(for: entry.notebookID)
+                    Image(systemName: currentNotebook != nil ? "folder.fill" : "folder.badge.plus")
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(inNotebook ? Color.accentColor : Color.accentColor.opacity(0.85))
+                        .foregroundStyle(currentNotebook?.color ?? Color.accentColor.opacity(0.85))
                 }
             }
         }
