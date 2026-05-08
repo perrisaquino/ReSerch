@@ -738,9 +738,12 @@ struct TranscriptDetailView: View {
                                 }
                             }
                             .padding(.horizontal, 16)
-                            .padding(.bottom, 24)
+                            // Generous bottom padding so the last card always
+                            // clears the home indicator and any active keyboard.
+                            .padding(.bottom, 60)
                         }
                         .scrollIndicators(.visible)
+                        .scrollDismissesKeyboard(.interactively)
                     }
                     .frame(width: panelWidth)
                     .frame(maxHeight: .infinity)
@@ -755,7 +758,10 @@ struct TranscriptDetailView: View {
                 }
                 .shadow(color: .black.opacity(0.4), radius: 18, x: -6, y: 0)
             }
-            .ignoresSafeArea()
+            // Ignore container safe areas (status bar + home indicator) so the
+            // panel runs edge-to-edge, but RESPECT the keyboard safe area so the
+            // ScrollView automatically resizes to keep the editing field visible.
+            .ignoresSafeArea(.container)
             .gesture(
                 DragGesture(minimumDistance: 24)
                     .onEnded { value in
@@ -1617,10 +1623,10 @@ struct TranscriptDetailView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 13)
                 .background(
-                    copied ? Color.green.opacity(0.85) : Color(red: 0.10, green: 0.13, blue: 0.20),
+                    copied ? Color.green.opacity(0.85) : Color.white,
                     in: RoundedRectangle(cornerRadius: 12)
                 )
-                .foregroundStyle(.white)
+                .foregroundStyle(copied ? .white : .black)
                 .animation(.easeInOut(duration: 0.18), value: copied)
             }
             .contextMenu {
