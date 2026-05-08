@@ -640,7 +640,8 @@ struct TranscriptDetailView: View {
                         pendingHighlightOffset = offset
                         pendingHighlightSlideIndex = slideIndex
                         showNoteInput = true
-                    }
+                    },
+                    onTap: { enterEditMode() }
                 )
             } else {
                 AnnotableTranscriptView(
@@ -668,7 +669,8 @@ struct TranscriptDetailView: View {
                             pendingExistingComment = ""
                         }
                         showNoteInput = true
-                    }
+                    },
+                    onTap: { enterEditMode() }
                 )
             }
         }
@@ -1381,6 +1383,14 @@ struct TranscriptDetailView: View {
         if let updated = vm.history.first(where: { $0.id == entry.id }) {
             entry = updated
         }
+    }
+
+    /// Drops into the focused markdown editor with the transcript loaded.
+    /// Same effect as tapping the pencil icon — used by the tap-anywhere-on-transcript
+    /// affordance so users don't have to hit the small pencil hit target.
+    private func enterEditMode() {
+        editingText = entry.result.transcript
+        isEditing = true
     }
 
     /// If the currently-expanded side-peek note ended up empty after trim, delete it.

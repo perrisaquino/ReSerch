@@ -8,6 +8,10 @@ struct AnnotableTranscriptView: UIViewRepresentable {
     let annotations: [Annotation]
     var onHighlight: ((String, Int) -> Void)?
     var onAddNote: ((String, Int) -> Void)?
+    /// Fires on a single tap when there's no active selection. Used by the
+    /// transcript detail view to enter edit mode without forcing the user to
+    /// hit the tiny pencil icon.
+    var onTap: (() -> Void)?
 
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
@@ -20,6 +24,16 @@ struct AnnotableTranscriptView: UIViewRepresentable {
         tv.textContainer.lineFragmentPadding = 0
         tv.dataDetectorTypes = []
         context.coordinator.textView = tv
+        // Tap gesture for "tap-to-edit". Delegate allows simultaneous recognition
+        // so UIKit's long-press-based text selection still works.
+        let tap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleTap(_:))
+        )
+        tap.numberOfTapsRequired = 1
+        tap.cancelsTouchesInView = false
+        tap.delegate = context.coordinator
+        tv.addGestureRecognizer(tap)
         applyContent(to: tv)
         return tv
     }
@@ -27,6 +41,7 @@ struct AnnotableTranscriptView: UIViewRepresentable {
     func updateUIView(_ uiView: UITextView, context: Context) {
         context.coordinator.onHighlight = onHighlight
         context.coordinator.onAddNote   = onAddNote
+        context.coordinator.onTap       = onTap
         context.coordinator.annotations = annotations
         applyContent(to: uiView)
     }
@@ -38,7 +53,7 @@ struct AnnotableTranscriptView: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onHighlight: onHighlight, onAddNote: onAddNote, annotations: annotations)
+        Coordinator(onHighlight: onHighlight, onAddNote: onAddNote, onTap: onTap, annotations: annotations)
     }
 
     // MARK: - Private
@@ -80,16 +95,39 @@ struct AnnotableTranscriptView: UIViewRepresentable {
 
     // MARK: - Coordinator
 
-    final class Coordinator: NSObject, UITextViewDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
         weak var textView: UITextView?
         var onHighlight: ((String, Int) -> Void)?
         var onAddNote: ((String, Int) -> Void)?
+        var onTap: (() -> Void)?
         var annotations: [Annotation]
 
-        init(onHighlight: ((String, Int) -> Void)?, onAddNote: ((String, Int) -> Void)?, annotations: [Annotation]) {
+        init(onHighlight: ((String, Int) -> Void)?, onAddNote: ((String, Int) -> Void)?, onTap: (() -> Void)?, annotations: [Annotation]) {
             self.onHighlight = onHighlight
             self.onAddNote   = onAddNote
+            self.onTap       = onTap
             self.annotations = annotations
+        }
+
+        // MARK: - Tap-to-edit
+
+        @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
+            // Suppress tap-to-edit while text is selected — that tap is the user
+            // dismissing the selection menu, not asking to enter edit mode.
+            if let tv = textView,
+               let range = tv.selectedTextRange,
+               !range.isEmpty {
+                return
+            }
+            onTap?()
+        }
+
+        // Allow our tap to coexist with UIKit's long-press selection gestures.
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+        ) -> Bool {
+            return true
         }
 
         @available(iOS 16.0, *)
