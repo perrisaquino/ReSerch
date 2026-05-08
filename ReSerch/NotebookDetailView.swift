@@ -21,6 +21,12 @@ struct NotebookDetailView: View {
     @State private var showBulkMoveSheet = false
     @State private var showBulkDeleteConfirm = false
 
+    /// "Add New" → presents AddTranscriptView pre-bound to this notebook.
+    @State private var showAddTranscript = false
+    /// "Add New" → presents ImportMediaSheet for audio/video imports, also
+    /// pre-bound to this notebook.
+    @State private var importKind: ImportMediaSheet.Kind? = nil
+
     init(notebook: Notebook, vm: TranscriptViewModel) {
         self.notebookID = notebook.id
         self.vm = vm
@@ -109,6 +115,29 @@ struct NotebookDetailView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button {
+                        showAddTranscript = true
+                    } label: {
+                        Label("Paste URL", systemImage: "link")
+                    }
+                    Button {
+                        importKind = .audio
+                    } label: {
+                        Label("Import Audio", systemImage: "waveform")
+                    }
+                    Button {
+                        importKind = .video
+                    } label: {
+                        Label("Import Video", systemImage: "video")
+                    }
+                } label: {
+                    Text("Add New")
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
                         renameText = nb.name
                         showRename = true
                     } label: {
@@ -166,6 +195,12 @@ struct NotebookDetailView: View {
                     selectedIDs.removeAll()
                 }
             )
+        }
+        .sheet(isPresented: $showAddTranscript) {
+            AddTranscriptView(vm: vm, destinationNotebook: nb)
+        }
+        .sheet(item: $importKind) { kind in
+            ImportMediaSheet(kind: kind, vm: vm, destinationNotebook: nb)
         }
         .confirmationDialog(
             selectedIDs.count == 1 ? "Delete 1 transcript?" : "Delete \(selectedIDs.count) transcripts?",

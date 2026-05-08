@@ -2,10 +2,16 @@ import SwiftUI
 
 struct AddTranscriptView: View {
     @Bindable var vm: TranscriptViewModel
+    /// When set, transcripts created in this session are auto-assigned to this
+    /// notebook on completion. Used by NotebookDetailView's "Add New" flow so
+    /// new transcripts land in the open notebook instead of unfiled.
+    var destinationNotebook: Notebook? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var urlText = ""
     @State private var entryToShow: TranscriptEntry? = nil
     @State private var playlistURLToPreview: IdentifiedURL? = nil
+    @State private var moveTargetEntryID: UUID? = nil
+    @State private var showMoveSheet: Bool = false
     @FocusState private var fieldFocused: Bool
 
     // Parse valid URLs from the text field (one per line)
@@ -99,6 +105,16 @@ struct AddTranscriptView: View {
                             vm.result = nil
                             urlText = ""
                             fieldFocused = true
+                        },
+                        destinationNotebook: destinationNotebook,
+                        onAddToNotebook: {
+                            // Stash the just-created entry's ID so the move sheet
+                            // operates on it. The most-recently-saved entry is at
+                            // history index 0 per saveToHistory's insert(at: 0).
+                            if let id = vm.history.first?.id {
+                                moveTargetEntryID = id
+                                showMoveSheet = true
+                            }
                         }
                     )
 
@@ -109,7 +125,14 @@ struct AddTranscriptView: View {
                 .onAppear { fieldFocused = true }
                 .onChange(of: vm.status) { _, newStatus in
                     // Dismiss keyboard when transcription finishes
-                    if case .done = newStatus { fieldFocused = false }
+                    if case .done = newStatus {
+                        fieldFocused = false
+                        // Auto-assign the freshly-saved entry to the destination
+                        // notebook, if this view was opened from a notebook context.
+                        if let nb = destinationNotebook, let new = vm.history.first {
+                            vm.assignNotebook(new, to: nb)
+                        }
+                    }
                 }
             }
             .navigationTitle(isDone ? "" : "Add Link")
@@ -129,6 +152,14 @@ struct AddTranscriptView: View {
             .sheet(item: $entryToShow) { entry in
                 TranscriptDetailView(entry: entry, vm: vm)
                     .onDisappear { dismiss() }
+            }
+            .sheet(isPresented: $showMoveSheet) {
+                if let id = moveTargetEntryID {
+                    MoveToNotebookSheet(vm: vm, selectedIDs: [id]) {
+                        showMoveSheet = false
+                        moveTargetEntryID = nil
+                    }
+                }
             }
             .sheet(item: $playlistURLToPreview) { wrapped in
                 PlaylistPreviewView(
@@ -180,6 +211,13 @@ struct AddTranscriptStatusView: View {
     let onDismiss: () -> Void
     let onSeeTranscript: () -> Void
     let onAddAnother: () -> Void
+    /// When non-nil, the transcript was saved into this notebook. Drives the
+    /// "Saved to [Name]" chip in the success state and hides the "Add to
+    /// Notebook" secondary CTA (since the choice is already made).
+    var destinationNotebook: Notebook? = nil
+    /// Fires when the user taps the "Add to Notebook" secondary CTA in the
+    /// success state. Only relevant when `destinationNotebook` is nil.
+    var onAddToNotebook: (() -> Void)? = nil
 
     @State private var quirkyIndex = 0
     @State private var signInProvider: TranscriptViewModel.SafariProvider? = nil
@@ -550,7 +588,7 @@ struct AddTranscriptStatusView: View {
     }
 
     private var doneArea: some View {
-        VStack(spacing: 28) {
+        VStack(spacing: 22) {
             // Success icon — centered, large, unambiguous
             VStack(spacing: 14) {
                 ZStack {
@@ -567,27 +605,71 @@ struct AddTranscriptStatusView: View {
                         .font(.title3)
                         .fontWeight(.bold)
                         .foregroundStyle(.white)
-                    Text("Ready in your feed")
-                        .font(.subheadline)
-                        .foregroundStyle(Color(white: 0.5))
+                    if destinationNotebook == nil {
+                        Text("Ready in your feed")
+                            .font(.subheadline)
+                            .foregroundStyle(Color(white: 0.5))
+                    }
+                }
+
+                if let nb = destinationNotebook {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(nb.color)
+                            .frame(width: 8, height: 8)
+                        Text("Saved to \(nb.name)")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule().fill(nb.color.opacity(0.14))
+                    )
+                    .overlay(
+                        Capsule().strokeBorder(nb.color.opacity(0.35), lineWidth: 1)
+                    )
                 }
             }
             .frame(maxWidth: .infinity)
             .padding(.top, 16)
 
-            // Single primary CTA
-            Button { onSeeTranscript() } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "doc.text")
-                    Text("See Transcript").fontWeight(.semibold)
+            VStack(spacing: 10) {
+                // Primary CTA — same as before
+                Button { onSeeTranscript() } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.text")
+                        Text("See Transcript").fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 15)
+                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12))
+                    .foregroundStyle(.white)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 15)
-                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12))
-                .foregroundStyle(.white)
+
+                // Secondary CTA — only when no destination notebook was chosen.
+                // Tinted accent so it reads as a meaningful next action without
+                // competing with the primary "See Transcript" button.
+                if destinationNotebook == nil, let action = onAddToNotebook {
+                    Button { action() } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "folder.badge.plus")
+                            Text("Add to Notebook").fontWeight(.semibold)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 1)
+                        )
+                        .foregroundStyle(Color.accentColor)
+                    }
+                }
             }
 
-            // Secondary action -- clearly lower weight
+            // Tertiary — text only, lowest visual weight
             Button { onAddAnother() } label: {
                 Text("Add Another")
                     .font(.subheadline)

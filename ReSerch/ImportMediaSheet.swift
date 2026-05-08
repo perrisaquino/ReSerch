@@ -20,6 +20,10 @@ struct ImportMediaSheet: View {
 
     let kind: Kind
     var vm: TranscriptViewModel
+    /// When non-nil, the imported transcript is auto-assigned to this notebook
+    /// the moment vm.status hits .done. Used by NotebookDetailView's "Add New"
+    /// flow so imported audio/video lands in the open notebook.
+    var destinationNotebook: Notebook? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var showPhotosPicker = false
@@ -69,6 +73,12 @@ struct ImportMediaSheet: View {
             }
             .onChange(of: vm.status) { _, newStatus in
                 if case .done = newStatus, importStarted {
+                    // Auto-assign to the destination notebook (if any) before
+                    // the success-state delay + dismiss. saveToHistory inserts
+                    // at index 0 so vm.history.first is the just-imported entry.
+                    if let nb = destinationNotebook, let new = vm.history.first {
+                        vm.assignNotebook(new, to: nb)
+                    }
                     Task {
                         try? await Task.sleep(for: .seconds(0.8))
                         dismiss()
