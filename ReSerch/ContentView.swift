@@ -125,6 +125,28 @@ struct ContentView: View {
             }
             .foregroundStyle(selectionMode ? Color.accentColor : .secondary)
         }
+        if selectionMode {
+            ToolbarItem(placement: .topBarLeading) {
+                Button(allSelected ? "Deselect All" : "Select All") {
+                    if allSelected {
+                        selectedIDs.removeAll()
+                    } else {
+                        // Select across the currently visible filtered set so a
+                        // search query scopes the bulk action to what the user
+                        // can actually see — matches iOS Mail / Photos behavior.
+                        selectedIDs = Set(filteredHistory.map { $0.id })
+                    }
+                }
+                .foregroundStyle(Color.accentColor)
+            }
+        }
+    }
+
+    /// True when every visible (filtered) row is selected. Drives the
+    /// Select All ↔ Deselect All toggle label and behavior.
+    private var allSelected: Bool {
+        let visible = filteredHistory
+        return !visible.isEmpty && visible.allSatisfy { selectedIDs.contains($0.id) }
     }
 
     private var bulkBar: some View {
@@ -147,8 +169,8 @@ struct ContentView: View {
                         .fontWeight(.semibold)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
-                        .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12))
-                        .foregroundStyle(.white)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
+                        .foregroundStyle(.black)
                 }
 
                 Button {
