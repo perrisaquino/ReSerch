@@ -74,7 +74,11 @@ struct CarouselCleanTranscriptView: View {
                     onAddNote: { text, offset in
                         onAddNote?(text, offset, slide.index)
                     },
-                    onTap: onTap
+                    // Slide-relative tap index doesn't map to a meaningful
+                    // position in the carousel's full raw markdown (which has
+                    // ### Slide N headers between slides), so discard the index
+                    // and just signal "enter edit mode" to the parent.
+                    onTap: { _ in onTap?() }
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {

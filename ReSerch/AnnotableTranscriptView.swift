@@ -8,10 +8,12 @@ struct AnnotableTranscriptView: UIViewRepresentable {
     let annotations: [Annotation]
     var onHighlight: ((String, Int) -> Void)?
     var onAddNote: ((String, Int) -> Void)?
-    /// Fires on a single tap when there's no active selection. Used by the
-    /// transcript detail view to enter edit mode without forcing the user to
-    /// hit the tiny pencil icon.
-    var onTap: (() -> Void)?
+    /// Fires on a single tap when there's no active selection. Receives the
+    /// UTF-16 character index of the tap point in the underlying raw markdown
+    /// text, so the parent can position the editor's cursor there instead of
+    /// jumping to the end. Used by the transcript detail view to enter edit
+    /// mode without forcing the user to hit the tiny pencil icon.
+    var onTap: ((Int) -> Void)?
 
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
@@ -99,10 +101,10 @@ struct AnnotableTranscriptView: UIViewRepresentable {
         weak var textView: UITextView?
         var onHighlight: ((String, Int) -> Void)?
         var onAddNote: ((String, Int) -> Void)?
-        var onTap: (() -> Void)?
+        var onTap: ((Int) -> Void)?
         var annotations: [Annotation]
 
-        init(onHighlight: ((String, Int) -> Void)?, onAddNote: ((String, Int) -> Void)?, onTap: (() -> Void)?, annotations: [Annotation]) {
+        init(onHighlight: ((String, Int) -> Void)?, onAddNote: ((String, Int) -> Void)?, onTap: ((Int) -> Void)?, annotations: [Annotation]) {
             self.onHighlight = onHighlight
             self.onAddNote   = onAddNote
             self.onTap       = onTap
@@ -112,14 +114,21 @@ struct AnnotableTranscriptView: UIViewRepresentable {
         // MARK: - Tap-to-edit
 
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
+            guard let tv = textView else { return }
             // Suppress tap-to-edit while text is selected — that tap is the user
             // dismissing the selection menu, not asking to enter edit mode.
-            if let tv = textView,
-               let range = tv.selectedTextRange,
-               !range.isEmpty {
-                return
+            if let range = tv.selectedTextRange, !range.isEmpty { return }
+            // Resolve the tap point to a character index so the parent can drop
+            // the editor's cursor exactly where the user tapped instead of
+            // jumping to the end of the transcript.
+            let point = recognizer.location(in: tv)
+            let index: Int
+            if let position = tv.closestPosition(to: point) {
+                index = tv.offset(from: tv.beginningOfDocument, to: position)
+            } else {
+                index = (tv.text as NSString).length
             }
-            onTap?()
+            onTap?(max(0, index))
         }
 
         // Allow our tap to coexist with UIKit's long-press selection gestures.

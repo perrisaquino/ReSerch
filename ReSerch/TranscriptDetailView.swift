@@ -19,6 +19,10 @@ struct TranscriptDetailView: View {
     /// highlight came from a carousel slide so the eventual Annotation gets the
     /// matching slideIndex.
     @State private var pendingHighlightSlideIndex: Int?
+    /// Character index where the editor's cursor should land when edit mode is
+    /// entered. Set by tap-to-edit so the caret appears under the user's
+    /// finger; nil falls back to UITextView's default (end of text).
+    @State private var pendingEditCursor: Int?
     /// Set when the user is editing the comment on an existing annotation (from
     /// AnnotableTranscriptView's "Add Note" on text that's already highlighted).
     /// nil = creating a new annotation.
@@ -225,7 +229,7 @@ struct TranscriptDetailView: View {
 
             Divider().background(Color.white.opacity(0.08))
 
-            MarkdownTextEditor(text: $editingText, actions: editorActions)
+            MarkdownTextEditor(text: $editingText, actions: editorActions, initialCursor: pendingEditCursor)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(red: 0.07, green: 0.09, blue: 0.13))
         }
@@ -619,8 +623,7 @@ struct TranscriptDetailView: View {
                 // Pencil edit button — drops into raw markdown editor for both regular
                 // transcripts and carousels (lets user fix OCR mistakes).
                 Button {
-                    editingText = entry.result.transcript
-                    isEditing = true
+                    enterEditMode()
                 } label: {
                     Image(systemName: "pencil")
                         .font(.system(size: 13))
@@ -680,7 +683,7 @@ struct TranscriptDetailView: View {
                         }
                         showNoteInput = true
                     },
-                    onTap: { enterEditMode() }
+                    onTap: { idx in enterEditMode(cursor: idx) }
                 )
             }
         }
@@ -1398,8 +1401,11 @@ struct TranscriptDetailView: View {
     /// Drops into the focused markdown editor with the transcript loaded.
     /// Same effect as tapping the pencil icon — used by the tap-anywhere-on-transcript
     /// affordance so users don't have to hit the small pencil hit target.
-    private func enterEditMode() {
+    /// Pass a `cursor` index to seed the editor's caret at that character offset
+    /// (so tap-to-edit lands the cursor where the user tapped instead of the end).
+    private func enterEditMode(cursor: Int? = nil) {
         editingText = entry.result.transcript
+        pendingEditCursor = cursor
         isEditing = true
     }
 
