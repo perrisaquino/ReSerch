@@ -15,6 +15,7 @@ struct ContentView: View {
     @State private var showPaywall = false
     @State private var showOnboarding = !OnboardingView.hasCompleted
     @State private var searchQuery: String = ""
+    @State private var searchIsPresented: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -27,7 +28,8 @@ struct ContentView: View {
             .toolbar { toolbarContent }
             .searchable(
                 text: $searchQuery,
-                placement: .navigationBarDrawer(displayMode: .automatic),
+                isPresented: $searchIsPresented,
+                placement: .navigationBarDrawer(displayMode: .always),
                 prompt: "Search transcripts, notes, captions"
             )
             .safeAreaInset(edge: .bottom) {
@@ -103,9 +105,17 @@ struct ContentView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
-            Button { showSettings = true } label: {
-                Image(systemName: "gearshape")
-                    .foregroundStyle(.secondary)
+            HStack(spacing: 14) {
+                Button {
+                    searchIsPresented = true
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                }
+                Button { showSettings = true } label: {
+                    Image(systemName: "gearshape")
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         ToolbarItem(placement: .topBarLeading) {
