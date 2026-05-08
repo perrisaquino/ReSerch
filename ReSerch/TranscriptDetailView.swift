@@ -13,7 +13,6 @@ struct TranscriptDetailView: View {
     @State private var dragBaseHeight: CGFloat = 220
     // @State on an @Observable object registers it as a dependency — view re-renders when colors change
     @State private var stylePrefs = MarkdownStylePrefs.shared
-    @State private var showAnnotations = false
     @State private var pendingHighlightText: String?
     @State private var pendingHighlightOffset: Int?
     /// nil for whole-transcript highlights (regular video). Set when the in-progress
@@ -37,6 +36,25 @@ struct TranscriptDetailView: View {
     @State private var sidePeekNoteOriginalText: String = ""
 
     enum SidePeekTab: Hashable { case info, notebook }
+
+    enum NoteSort: String, CaseIterable, Identifiable {
+        case recentlyEdited
+        case recentlyAdded
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .recentlyEdited: return "Recently Edited"
+            case .recentlyAdded:  return "Recently Added"
+            }
+        }
+        var icon: String {
+            switch self {
+            case .recentlyEdited: return "pencil"
+            case .recentlyAdded:  return "plus.circle"
+            }
+        }
+    }
+    @State private var sidePeekNoteSort: NoteSort = .recentlyEdited
     @State private var showEditorComment = false
     @State private var showDocNoteEditor = false
     @State private var editingAnnotationID: UUID? = nil
@@ -91,10 +109,6 @@ struct TranscriptDetailView: View {
                 .safeAreaInset(edge: .bottom) { if !isEditing { bottomBar } }
                 .preferredColorScheme(.dark)
                 .fullScreenCover(isPresented: $showPaywall) { PaywallView() }
-                .sheet(isPresented: $showAnnotations) {
-                    AnnotationsPanel(annotations: $entry.result.annotations, transcriptText: entry.result.transcript)
-                        .onDisappear { vm.updateEntry(entry) }
-                }
                 .sheet(isPresented: $showNoteInput) {
                     NoteInputSheet(highlightedText: pendingHighlightText ?? "", initialComment: pendingExistingComment) { comment in
                         if let existingId = pendingExistingAnnotationId,
@@ -260,7 +274,10 @@ struct TranscriptDetailView: View {
                 .onEnded { value in
                     let isLeftSwipe = value.translation.width < -80
                     let isHorizontal = abs(value.translation.width) > abs(value.translation.height) * 2
-                    if isLeftSwipe && isHorizontal { showAnnotations = true }
+                    if isLeftSwipe && isHorizontal {
+                        sidePeekTab = .info
+                        showDocNoteEditor = true
+                    }
                 }
         )
     }
@@ -664,6 +681,18 @@ struct TranscriptDetailView: View {
                         .foregroundStyle(Color.accentColor)
                 }
             }
+        } else {
+            // Notebook button — assigns/moves this transcript to a notebook
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showMoveToNotebook = true
+                } label: {
+                    let inNotebook = entry.notebookID != nil
+                    Image(systemName: inNotebook ? "folder.fill" : "folder.badge.plus")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(inNotebook ? Color.accentColor : Color.accentColor.opacity(0.85))
+                }
+            }
         }
     }
 
@@ -738,12 +767,31 @@ struct TranscriptDetailView: View {
 
     private var documentNoteSidePeekSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Transcript Note")
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(.white.opacity(0.55))
-                .textCase(.uppercase)
-                .tracking(0.6)
+            HStack {
+                Text("Transcript Note")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white.opacity(0.55))
+                    .textCase(.uppercase)
+                    .tracking(0.6)
+                Spacer()
+                if entry.documentNotes.count > 1 {
+                    Menu {
+                        Picker("Sort", selection: $sidePeekNoteSort) {
+                            ForEach(NoteSort.allCases) { option in
+                                Label(option.label, systemImage: option.icon).tag(option)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.up.arrow.down")
+                            Text(sidePeekNoteSort.label)
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.55))
+                    }
+                }
+            }
 
             if entry.documentNotes.isEmpty {
                 // Single full-width pill button — matches the reference layout.
@@ -1079,8 +1127,14 @@ struct TranscriptDetailView: View {
     private var sortedSidePeekNotes: [DocumentNote] {
         let pinned = entry.documentNotes.filter { $0.isPinned }
         let unpinned = entry.documentNotes.filter { !$0.isPinned }
-            .sorted { $0.updatedAt > $1.updatedAt }
-        return pinned + unpinned
+        let sortedUnpinned: [DocumentNote]
+        switch sidePeekNoteSort {
+        case .recentlyEdited:
+            sortedUnpinned = unpinned.sorted { $0.updatedAt > $1.updatedAt }
+        case .recentlyAdded:
+            sortedUnpinned = unpinned.sorted { $0.createdAt > $1.createdAt }
+        }
+        return pinned + sortedUnpinned
     }
 
     @ViewBuilder
@@ -1363,7 +1417,32 @@ struct TranscriptDetailView: View {
         return max(window.safeAreaInsets.top, 20)
     }
 
-    // MARK: - Copy helpers (long-press menu on the Copy button)
+    // MARK: - Copy helpers (Copy button menu)
+
+    private func copyAsMarkdown() {
+        guard gate.canExport() else {
+            showPaywall = true
+            return
+        }
+        UIPasteboard.general.string = vm.markdownFor(entry)
+        gate.recordExport()
+        flashCopied()
+    }
+
+    private func copyAsRichText() {
+        guard gate.canExport() else {
+            showPaywall = true
+            return
+        }
+        if let attrStr = RichTextFormatter.build(entry.result) {
+            UIPasteboard.general.setObjects([attrStr])
+        } else {
+            // Fall back to markdown if attributed string build fails.
+            UIPasteboard.general.string = vm.markdownFor(entry)
+        }
+        gate.recordExport()
+        flashCopied()
+    }
 
     private func copyTranscriptTextOnly() {
         // Just the transcribed words — no metadata, no frontmatter, no notes.
@@ -1477,55 +1556,28 @@ struct TranscriptDetailView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 10) {
-                // MD / Rich mode pill
-                HStack(spacing: 0) {
-                    modeTab(label: "MD",   active: !stylePrefs.richTextMode) {
-                        stylePrefs.richTextMode = false; stylePrefs.save()
-                    }
-                    modeTab(label: "Rich", active: stylePrefs.richTextMode) {
-                        stylePrefs.richTextMode = true; stylePrefs.save()
-                    }
+            // Copy button — tap opens a menu with format choices (markdown or rich text).
+            // Default format from Settings is marked with a checkmark. Below the format
+            // options sit focused "select all" alternatives (transcript text, caption,
+            // notes, URL) for granular copying.
+            Menu {
+                Button {
+                    copyAsMarkdown()
+                } label: {
+                    Label(
+                        "Copy as Markdown" + (stylePrefs.richTextMode ? "" : "  ✓"),
+                        systemImage: "doc.text"
+                    )
                 }
-                .background(Color(white: 0.10), in: RoundedRectangle(cornerRadius: 8))
-
-            // Copy button — full-width, proper button shape.
-            // Default tap copies the full formatted output (markdown or rich text).
-            // Long-press opens a context menu with focused "select all" alternatives:
-            // copy transcript text only, caption only, source URL only. Mirrors how
-            // Apple Notes / Safari surface "Copy Link" / "Copy Page" submenus.
-            Button {
-                guard gate.canExport() else {
-                    showPaywall = true
-                    return
+                Button {
+                    copyAsRichText()
+                } label: {
+                    Label(
+                        "Copy as Rich Text" + (stylePrefs.richTextMode ? "  ✓" : ""),
+                        systemImage: "doc.richtext"
+                    )
                 }
-                if stylePrefs.richTextMode,
-                   let attrStr = RichTextFormatter.build(entry.result) {
-                    UIPasteboard.general.setObjects([attrStr])
-                } else {
-                    UIPasteboard.general.string = vm.markdownFor(entry)
-                }
-                gate.recordExport()
-                copied = true
-                Task {
-                    try? await Task.sleep(for: .seconds(2))
-                    copied = false
-                }
-            } label: {
-                Label(
-                    copied ? "Copied!" : (stylePrefs.richTextMode ? "Copy Rich Text" : "Copy Markdown"),
-                    systemImage: copied ? "checkmark" : "doc.on.doc"
-                )
-                .fontWeight(.semibold)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 13)
-                .background(
-                    copied ? Color.green.opacity(0.85) : Color(red: 0.10, green: 0.13, blue: 0.20),
-                    in: RoundedRectangle(cornerRadius: 12)
-                )
-                .foregroundStyle(.white)
-                .animation(.easeInOut(duration: 0.18), value: copied)
-            }
-            .contextMenu {
+                Divider()
                 Button {
                     copyTranscriptTextOnly()
                 } label: {
@@ -1550,18 +1602,20 @@ struct TranscriptDetailView: View {
                     Label("Copy Source URL", systemImage: "link")
                 }
                 .disabled(entry.result.url.isEmpty)
-            }
-
-            // Notebook button — assigns/moves this transcript to a notebook
-            Button {
-                showMoveToNotebook = true
             } label: {
-                let inNotebook = entry.notebookID != nil
-                Image(systemName: inNotebook ? "folder.fill" : "folder.badge.plus")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(inNotebook ? Color.accentColor : Color(white: 0.72))
-                    .frame(width: 40, height: 40)
-                    .background(Color(white: 0.14), in: Circle())
+                Label(
+                    copied ? "Copied!" : "Copy",
+                    systemImage: copied ? "checkmark" : "doc.on.doc"
+                )
+                .fontWeight(.semibold)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(
+                    copied ? Color.green.opacity(0.85) : Color(red: 0.10, green: 0.13, blue: 0.20),
+                    in: RoundedRectangle(cornerRadius: 12)
+                )
+                .foregroundStyle(.white)
+                .animation(.easeInOut(duration: 0.18), value: copied)
             }
 
             // Share button — gated; presents activity sheet only after gate check
@@ -1610,22 +1664,6 @@ struct TranscriptDetailView: View {
         }
         guard let root = UIApplication.shared.keyForegroundWindow?.rootViewController else { return }
         root.topmostPresentedViewController.present(av, animated: true)
-    }
-
-    private func modeTab(label: String, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(active ? .white : Color(white: 0.40))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    active ? Color(red: 0.10, green: 0.13, blue: 0.20) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 7)
-                )
-        }
-        .buttonStyle(.plain)
-        .animation(.easeInOut(duration: 0.15), value: active)
     }
 
     private func shortCount(_ n: Int) -> String {

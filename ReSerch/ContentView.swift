@@ -451,6 +451,13 @@ struct TranscriptRow: View {
     private var menuButton: some View {
         Menu {
             Button {
+                renameText = entry.title
+                showRenameAlert = true
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+
+            Button {
                 onCopy()
                 showCopied = true
                 Task {
@@ -459,13 +466,6 @@ struct TranscriptRow: View {
                 }
             } label: {
                 Label(showCopied ? "Copied!" : "Copy Markdown", systemImage: showCopied ? "checkmark" : "doc.on.doc")
-            }
-
-            Button {
-                renameText = entry.title
-                showRenameAlert = true
-            } label: {
-                Label("Rename", systemImage: "pencil")
             }
 
             if let onMoveToNotebook {
