@@ -161,7 +161,18 @@ struct TranscriptDetailView: View {
                     }
                 }
                 .onChange(of: showDocNoteEditor) { _, showing in
-                    if showing { refreshEntry() }
+                    if showing {
+                        refreshEntry()
+                    } else if let id = sidePeekExpandedNoteID {
+                        // Panel dismissed while editing — prune the note if it ended empty.
+                        pruneEmptySidePeekNote(id: id)
+                        sidePeekExpandedNoteID = nil
+                    }
+                }
+                .onChange(of: sidePeekExpandedNoteID) { oldID, _ in
+                    // Any collapse path — Save, Cancel, or tapping a different note card —
+                    // gives us a chance to discard a note the user never filled in.
+                    if let oldID { pruneEmptySidePeekNote(id: oldID) }
                 }
             }
 
@@ -1361,6 +1372,17 @@ struct TranscriptDetailView: View {
     private func refreshEntry() {
         if let updated = vm.history.first(where: { $0.id == entry.id }) {
             entry = updated
+        }
+    }
+
+    /// If the currently-expanded side-peek note ended up empty after trim, delete it.
+    /// Called on every collapse path (Save, Cancel, tap-out, panel dismiss) so empty
+    /// "Add note" stubs the user never filled in don't litter the notes list.
+    private func pruneEmptySidePeekNote(id: UUID) {
+        if let note = entry.documentNotes.first(where: { $0.id == id }),
+           note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            vm.removeDocumentNote(entry, noteID: id)
+            refreshEntry()
         }
     }
 
