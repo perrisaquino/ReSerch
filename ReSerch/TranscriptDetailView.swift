@@ -40,17 +40,20 @@ struct TranscriptDetailView: View {
     enum NoteSort: String, CaseIterable, Identifiable {
         case recentlyEdited
         case recentlyAdded
+        case oldestFirst
         var id: String { rawValue }
         var label: String {
             switch self {
             case .recentlyEdited: return "Recently Edited"
             case .recentlyAdded:  return "Recently Added"
+            case .oldestFirst:    return "Oldest First"
             }
         }
         var icon: String {
             switch self {
             case .recentlyEdited: return "pencil"
             case .recentlyAdded:  return "plus.circle"
+            case .oldestFirst:    return "arrow.down.circle"
             }
         }
     }
@@ -1144,6 +1147,8 @@ struct TranscriptDetailView: View {
             sortedUnpinned = unpinned.sorted { $0.updatedAt > $1.updatedAt }
         case .recentlyAdded:
             sortedUnpinned = unpinned.sorted { $0.createdAt > $1.createdAt }
+        case .oldestFirst:
+            sortedUnpinned = unpinned.sorted { $0.createdAt < $1.createdAt }
         }
         return pinned + sortedUnpinned
     }
@@ -1578,28 +1583,44 @@ struct TranscriptDetailView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 10) {
-            // Copy button — tap opens a menu with format choices (markdown or rich text).
-            // Default format from Settings is marked with a checkmark. Below the format
-            // options sit focused "select all" alternatives (transcript text, caption,
-            // notes, URL) for granular copying.
-            Menu {
-                Button {
-                    copyAsMarkdown()
-                } label: {
-                    Label(
-                        "Copy as Markdown" + (stylePrefs.richTextMode ? "" : "  ✓"),
-                        systemImage: "doc.text"
-                    )
+            // MD / Rich mode pill — sets the default the Copy button uses.
+            // Mirrors the Settings → Default Format picker so power users can
+            // flip mode mid-session without a settings detour.
+            HStack(spacing: 0) {
+                modeTab(label: "MD",   active: !stylePrefs.richTextMode) {
+                    stylePrefs.richTextMode = false; stylePrefs.save()
                 }
-                Button {
+                modeTab(label: "Rich", active: stylePrefs.richTextMode) {
+                    stylePrefs.richTextMode = true; stylePrefs.save()
+                }
+            }
+            .background(Color(white: 0.10), in: RoundedRectangle(cornerRadius: 8))
+
+            // Copy button — single tap copies in the selected pill mode.
+            // Long-press exposes the granular "select all" alternatives (transcript
+            // text only, caption only, all notes, source URL).
+            Button {
+                if stylePrefs.richTextMode {
                     copyAsRichText()
-                } label: {
-                    Label(
-                        "Copy as Rich Text" + (stylePrefs.richTextMode ? "  ✓" : ""),
-                        systemImage: "doc.richtext"
-                    )
+                } else {
+                    copyAsMarkdown()
                 }
-                Divider()
+            } label: {
+                Label(
+                    copied ? "Copied!" : "Copy",
+                    systemImage: copied ? "checkmark" : "doc.on.doc"
+                )
+                .fontWeight(.semibold)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(
+                    copied ? Color.green.opacity(0.85) : Color(red: 0.10, green: 0.13, blue: 0.20),
+                    in: RoundedRectangle(cornerRadius: 12)
+                )
+                .foregroundStyle(.white)
+                .animation(.easeInOut(duration: 0.18), value: copied)
+            }
+            .contextMenu {
                 Button {
                     copyTranscriptTextOnly()
                 } label: {
@@ -1624,20 +1645,6 @@ struct TranscriptDetailView: View {
                     Label("Copy Source URL", systemImage: "link")
                 }
                 .disabled(entry.result.url.isEmpty)
-            } label: {
-                Label(
-                    copied ? "Copied!" : "Copy",
-                    systemImage: copied ? "checkmark" : "doc.on.doc"
-                )
-                .fontWeight(.semibold)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 13)
-                .background(
-                    copied ? Color.green.opacity(0.85) : Color(red: 0.10, green: 0.13, blue: 0.20),
-                    in: RoundedRectangle(cornerRadius: 12)
-                )
-                .foregroundStyle(.white)
-                .animation(.easeInOut(duration: 0.18), value: copied)
             }
 
             // Share button — gated; presents activity sheet only after gate check
@@ -1692,6 +1699,22 @@ struct TranscriptDetailView: View {
         if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
         if n >= 1_000 { return String(format: "%.1fK", Double(n) / 1_000) }
         return "\(n)"
+    }
+
+    private func modeTab(label: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(active ? .white : Color(white: 0.40))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    active ? Color(red: 0.10, green: 0.13, blue: 0.20) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 7)
+                )
+        }
+        .buttonStyle(.plain)
+        .animation(.easeInOut(duration: 0.15), value: active)
     }
 
     // Constructs a profile URL from handle + platform.
