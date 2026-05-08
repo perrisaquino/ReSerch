@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var gate = ExportGate.shared
     @State private var showPaywall = false
     @State private var showOnboarding = !OnboardingView.hasCompleted
+    @State private var searchQuery: String = ""
 
     var body: some View {
         NavigationStack {
@@ -24,6 +25,11 @@ struct ContentView: View {
             .navigationTitle("ReSerch")
             .navigationBarTitleDisplayMode(.large)
             .toolbar { toolbarContent }
+            .searchable(
+                text: $searchQuery,
+                placement: .navigationBarDrawer(displayMode: .automatic),
+                prompt: "Search transcripts, notes, captions"
+            )
             .safeAreaInset(edge: .bottom) {
                 if selectionMode && !selectedIDs.isEmpty { bulkBar }
             }
@@ -176,10 +182,12 @@ struct ContentView: View {
         Group {
             if vm.history.isEmpty {
                 emptyState
+            } else if filteredHistory.isEmpty {
+                noSearchResults
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(vm.history) { entry in
+                        ForEach(filteredHistory) { entry in
                             TranscriptRow(
                                 entry: entry,
                                 isSelected: selectedIDs.contains(entry.id),
@@ -208,6 +216,65 @@ struct ContentView: View {
                 }
             }
         }
+        .background(Color(red: 0.07, green: 0.09, blue: 0.13))
+    }
+
+    /// History filtered by the current search query. Matches case-insensitively
+    /// across every field a user might be searching for: title, author/handle,
+    /// transcript body, caption, document notes, annotation highlights and their
+    /// comments, the notebook name, and carousel slide OCR text. An empty query
+    /// returns the full history unchanged so feed performance is unaffected when
+    /// search isn't active.
+    private var filteredHistory: [TranscriptEntry] {
+        let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return vm.history }
+        return vm.history.filter { entry in entryMatches(entry, query: q) }
+    }
+
+    private func entryMatches(_ entry: TranscriptEntry, query: String) -> Bool {
+        let r = entry.result
+        let haystacks: [String?] = [
+            r.title,
+            r.editableTitle,
+            r.author,
+            r.handle,
+            r.transcript,
+            r.caption,
+            vm.notebook(for: entry.notebookID)?.name
+        ]
+        for hay in haystacks {
+            if let hay, hay.localizedCaseInsensitiveContains(query) { return true }
+        }
+        for note in entry.documentNotes {
+            if note.text.localizedCaseInsensitiveContains(query) { return true }
+        }
+        for ann in r.annotations {
+            if ann.text.localizedCaseInsensitiveContains(query) { return true }
+            if ann.comment.localizedCaseInsensitiveContains(query) { return true }
+        }
+        if let slides = r.carouselSlides {
+            for slide in slides {
+                if let t = slide.recognizedText, t.localizedCaseInsensitiveContains(query) { return true }
+            }
+        }
+        return false
+    }
+
+    private var noSearchResults: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "text.magnifyingglass")
+                .font(.system(size: 44))
+                .foregroundStyle(.quaternary)
+            VStack(spacing: 6) {
+                Text("No matches")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                Text("Try a different word or check spelling.")
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(red: 0.07, green: 0.09, blue: 0.13))
     }
 
