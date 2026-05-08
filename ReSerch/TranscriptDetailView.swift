@@ -1654,23 +1654,35 @@ struct TranscriptDetailView: View {
                     Label("Copy Source URL", systemImage: "link")
                 }
                 .disabled(entry.result.url.isEmpty)
+                Divider()
+                Button {
+                    guard gate.canExport() else {
+                        showPaywall = true
+                        return
+                    }
+                    presentShareSheet()
+                    gate.recordExport()
+                } label: {
+                    Label("Share…", systemImage: "square.and.arrow.up")
+                }
             }
 
-            // Share button — gated; presents activity sheet only after gate check
+            // Side-panel button — opens the trailing inspector (notes + highlights).
+            // Replaces the previous Share button; Share lives in the Copy button's
+            // long-press context menu now.
             Button {
-                guard gate.canExport() else {
-                    showPaywall = true
-                    return
+                sidePeekTab = .info
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                    showDocNoteEditor = true
                 }
-                presentShareSheet()
-                gate.recordExport()
             } label: {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color(white: 0.72))
+                Image(systemName: "sidebar.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color(white: 0.78))
                     .frame(width: 40, height: 40)
                     .background(Color(white: 0.14), in: Circle())
             }
+            .accessibilityLabel("Show notes and highlights")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
