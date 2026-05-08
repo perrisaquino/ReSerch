@@ -29,7 +29,6 @@ struct ContentView: View {
             .searchable(
                 text: $searchQuery,
                 isPresented: $searchIsPresented,
-                placement: .navigationBarDrawer(displayMode: .always),
                 prompt: "Search"
             )
             .safeAreaInset(edge: .bottom) {
