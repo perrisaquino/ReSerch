@@ -286,6 +286,16 @@ struct TranscriptDetailView: View {
         .simultaneousGesture(
             DragGesture(minimumDistance: 50, coordinateSpace: .local)
                 .onEnded { value in
+                    // Suppress when the swipe started inside the carousel image
+                    // strip — the strip has its own page-swipe gesture for
+                    // switching slides and `simultaneousGesture` would otherwise
+                    // fire both, opening the side peek every time the user
+                    // changes slides. The strip occupies the top `videoHeight`
+                    // points, plus the 22pt drag handle below it.
+                    if isCarouselTranscript,
+                       value.startLocation.y < videoHeight + 22 {
+                        return
+                    }
                     let isLeftSwipe = value.translation.width < -80
                     let isHorizontal = abs(value.translation.width) > abs(value.translation.height) * 2
                     if isLeftSwipe && isHorizontal {
