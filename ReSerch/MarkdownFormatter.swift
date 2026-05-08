@@ -20,7 +20,7 @@ enum MarkdownFormatter {
         lines += ["author: \"\(result.author)\""]
         if !handle.isEmpty { lines += ["username: \"\(handle)\""] }
         lines += ["platform: \(result.platform)"]
-        lines += ["url: \"\(result.url)\""]
+        lines += ["source: \"\(result.url)\""]
         if let nb = notebook {
             lines += ["notebook: \"\(nb.name.replacingOccurrences(of: "\"", with: "'"))\""]
         }
@@ -46,7 +46,15 @@ enum MarkdownFormatter {
             }
             return handle.isEmpty ? result.author : "\(result.author) \(handle)"
         }()
-        var metaParts = ["**Author:** \(authorDisplay)"]
+
+        var metaParts: [String] = []
+
+        // Creator with profile link sits first
+        if let url = creatorURL {
+            let creatorLabel = handle.isEmpty ? result.author : handle
+            metaParts += ["**Creator:** [\(creatorLabel)](\(url))"]
+        }
+        metaParts += ["**Author:** \(authorDisplay)"]
         metaParts += ["**Platform:** \(result.platform)"]
         if let nb = notebook { metaParts += ["**Notebook:** \(nb.name)"] }
         if let posted = postedStr { metaParts += ["**Posted:** \(posted)"] }
@@ -64,16 +72,9 @@ enum MarkdownFormatter {
         if !statParts.isEmpty { metaParts += ["**Stats:** " + statParts.joined(separator: " · ")] }
 
         if result.url.isEmpty {
-            // Local-file imports have no source URL to link to.
             metaParts += ["**Source:** Imported file"]
         } else {
-            // Hyperlinked label that names what kind of post it is — readers in Obsidian
-            // see e.g. "Instagram carousel post" as the link text, not generic "View Original".
-            metaParts += ["**Source:** [\(sourceLabel(for: result))](\(result.url))"]
-        }
-        if let url = creatorURL {
-            let creatorLabel = handle.isEmpty ? result.author : handle
-            metaParts += ["**Creator:** [\(creatorLabel)](\(url))"]
+            metaParts += ["**Source:** [See Post](\(result.url))"]
         }
         lines += [metaParts.joined(separator: "  \n"), ""]
 
@@ -212,6 +213,179 @@ enum MarkdownFormatter {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         return formatter.string(from: NSNumber(value: n)) ?? "\(n)"
+    }
+
+    // MARK: - Template-aware overload
+
+    static func format(
+        _ result: TranscriptResult,
+        notebook: Notebook?,
+        notes: [DocumentNote],
+        template: ExportTemplatePrefs,
+        capturedAt: Date? = nil
+    ) -> String {
+        var lines: [String] = []
+
+        if template.showYAML {
+            lines += buildYAML(result, notebook: notebook, template: template, capturedAt: capturedAt)
+        }
+
+        for section in template.sectionOrder {
+            switch section {
+
+            case .title:
+                guard template.showTitle else { continue }
+                let t = result.editableTitle.isEmpty ? result.title : result.editableTitle
+                lines += ["# \(t)", ""]
+
+            case .meta:
+                guard template.showMetaBlock else { continue }
+                let block = buildMetaBlock(result, notebook: notebook, template: template, capturedAt: capturedAt)
+                if !block.isEmpty { lines += [block, ""] }
+
+            case .pinnedNote:
+                guard template.showPinnedNote else { continue }
+                if let pinned = notes.first(where: { $0.isPinned }),
+                   !pinned.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    lines += ["## Pinned Note", "", pinned.text, ""]
+                }
+
+            case .caption:
+                guard template.showCaption else { continue }
+                if !result.caption.isEmpty {
+                    lines += ["## Caption", "", result.caption, ""]
+                }
+
+            case .transcript:
+                guard template.showTranscript else { continue }
+                if !result.transcript.isEmpty {
+                    lines += ["## Transcript", "", annotatedTranscript(result), ""]
+                }
+
+            case .notes:
+                guard template.showNotes else { continue }
+                let unpinned = notes
+                    .filter { !$0.isPinned && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                    .sorted { $0.createdAt < $1.createdAt }
+                if !unpinned.isEmpty {
+                    lines += ["## Notes", ""]
+                    for note in unpinned {
+                        lines += ["### \(DateFormatter.noteHeading.string(from: note.createdAt))", ""]
+                        lines += [note.text, ""]
+                    }
+                }
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private static func buildYAML(
+        _ result: TranscriptResult,
+        notebook: Notebook?,
+        template: ExportTemplatePrefs,
+        capturedAt: Date?
+    ) -> [String] {
+        let savedDate = DateFormatter.obsidianDate.string(from: capturedAt ?? Date())
+        let postedStr = result.postedDate.map { DateFormatter.isoDate.string(from: $0) }
+        let title     = result.editableTitle.isEmpty ? result.title : result.editableTitle
+        let handle    = result.handle.isEmpty ? "" : (result.handle.hasPrefix("@") ? result.handle : "@\(result.handle)")
+
+        var lines: [String] = ["---"]
+        lines += ["title: \"\(title.replacingOccurrences(of: "\"", with: "'"))\""]
+
+        for field in template.yamlFieldOrder {
+            switch field {
+            case .author:
+                guard template.yamlAuthor else { continue }
+                lines += ["author: \"\(result.author)\""]
+            case .handle:
+                guard template.yamlHandle && !handle.isEmpty else { continue }
+                lines += ["username: \"\(handle)\""]
+            case .platform:
+                guard template.yamlPlatform else { continue }
+                lines += ["platform: \(result.platform)"]
+            case .source:
+                guard template.yamlSource else { continue }
+                lines += ["source: \"\(result.url)\""]
+            case .notebook:
+                guard template.yamlNotebook, let nb = notebook else { continue }
+                lines += ["notebook: \"\(nb.name.replacingOccurrences(of: "\"", with: "'"))\""]
+            case .savedDate:
+                guard template.yamlSavedDate else { continue }
+                lines += ["captured: [[\(savedDate)]]"]
+            case .postedDate:
+                guard template.yamlPostedDate, let posted = postedStr else { continue }
+                lines += ["posted: \(posted)"]
+            case .duration:
+                guard template.yamlDuration, let dur = result.duration else { continue }
+                lines += ["duration: \"\(dur)\""]
+            case .stats:
+                guard template.yamlStats else { continue }
+                if let v  = result.viewCount    { lines += ["views: \(v)"] }
+                if let l  = result.likeCount    { lines += ["likes: \(l)"] }
+                if let c  = result.commentCount { lines += ["comments: \(c)"] }
+                if let s  = result.shareCount   { lines += ["shares: \(s)"] }
+                if let sv = result.saveCount    { lines += ["saves: \(sv)"] }
+            }
+        }
+
+        lines += ["---", ""]
+        return lines
+    }
+
+    private static func buildMetaBlock(
+        _ result: TranscriptResult,
+        notebook: Notebook?,
+        template: ExportTemplatePrefs,
+        capturedAt: Date?
+    ) -> String {
+        let postedStr  = result.postedDate.map { DateFormatter.isoDate.string(from: $0) }
+        let capturedStr = capturedAt.map { DateFormatter.isoDate.string(from: $0) }
+        let handle     = result.handle.isEmpty ? "" : (result.handle.hasPrefix("@") ? result.handle : "@\(result.handle)")
+        let creatorURL = profileURL(for: result)
+
+        var parts: [String] = []
+
+        if template.metaCreator, let url = creatorURL {
+            let label = handle.isEmpty ? result.author : handle
+            parts += ["**Creator:** [\(label)](\(url))"]
+        }
+
+        if template.metaAuthor {
+            let authorDisplay: String = {
+                if let url = creatorURL {
+                    let label = handle.isEmpty ? result.author : "\(result.author) \(handle)"
+                    return "[\(label)](\(url))"
+                }
+                return handle.isEmpty ? result.author : "\(result.author) \(handle)"
+            }()
+            parts += ["**Author:** \(authorDisplay)"]
+        }
+
+        if template.metaPlatform  { parts += ["**Platform:** \(result.platform)"] }
+        if template.metaNotebook, let nb = notebook { parts += ["**Notebook:** \(nb.name)"] }
+        if template.metaCapturedDate, let cap = capturedStr { parts += ["**Captured:** \(cap)"] }
+        if template.metaPostedDate,   let posted = postedStr { parts += ["**Posted:** \(posted)"] }
+        if template.metaDuration,  let dur = result.duration { parts += ["**Duration:** \(dur)"] }
+
+        if template.metaStats {
+            var statParts: [String] = []
+            if let v  = result.viewCount    { statParts += ["\(formatCount(v)) views"] }
+            if let l  = result.likeCount    { statParts += ["\(formatCount(l)) likes"] }
+            if let c  = result.commentCount { statParts += ["\(formatCount(c)) comments"] }
+            if let s  = result.shareCount   { statParts += ["\(formatCount(s)) shares"] }
+            if let sv = result.saveCount    { statParts += ["\(formatCount(sv)) saves"] }
+            if !statParts.isEmpty { parts += ["**Stats:** " + statParts.joined(separator: " · ")] }
+        }
+
+        if template.metaSource {
+            parts += result.url.isEmpty
+                ? ["**Source:** Imported file"]
+                : ["**Source:** [See Post](\(result.url))"]
+        }
+
+        return parts.joined(separator: "  \n")
     }
 }
 

@@ -17,6 +17,7 @@ struct SettingsView: View {
     @State private var exportShareItem: URL?
     @State private var exportInProgress = false
     @State private var exportError: String?
+    @State private var redeemError: String?
     @State private var showBackupInfo = false
     @Environment(\.dismiss) private var dismiss
 
@@ -50,9 +51,25 @@ struct SettingsView: View {
             }
             .preferredColorScheme(.dark)
             .offerCodeRedemption(isPresented: $showRedeem) { result in
-                if case .success = result {
-                    Task { await iap.refreshEntitlements() }
+                switch result {
+                case .success:
+                    Task {
+                        // Sync first to guarantee Apple's servers flush the new
+                        // transaction into the local receipt before we check entitlements.
+                        try? await AppStore.sync()
+                        await iap.refreshEntitlements()
+                    }
+                case .failure(let error):
+                    redeemError = error.localizedDescription
                 }
+            }
+            .alert("Code Redemption Failed", isPresented: Binding(
+                get: { redeemError != nil },
+                set: { if !$0 { redeemError = nil } }
+            )) {
+                Button("OK", role: .cancel) { redeemError = nil }
+            } message: {
+                if let msg = redeemError { Text(msg) }
             }
             .sheet(isPresented: $showFeedback) {
                 FeedbackFormView()
@@ -109,6 +126,9 @@ struct SettingsView: View {
                 get: { prefs.saveVideoToCameraRoll },
                 set: { prefs.saveVideoToCameraRoll = $0; prefs.save() }
             ))
+            NavigationLink("Export Template") {
+                TemplateSettingsView()
+            }
         }
     }
 

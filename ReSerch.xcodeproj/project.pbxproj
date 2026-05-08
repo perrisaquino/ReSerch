@@ -67,22 +67,16 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		CBCE89ED2F8729DF00569DCD /* ReSerch */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = ReSerch;
 			sourceTree = "<group>";
 		};
 		CBCE8A002F8729E200569DCD /* ReSerchTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = ReSerchTests;
 			sourceTree = "<group>";
 		};
 		CBCE8A0A2F8729E200569DCD /* ReSerchUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = ReSerchUITests;
 			sourceTree = "<group>";
 		};

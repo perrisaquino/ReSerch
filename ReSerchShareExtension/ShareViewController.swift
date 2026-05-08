@@ -1,31 +1,132 @@
 import UIKit
+import SwiftUI
 import Social
 import UniformTypeIdentifiers
 
-/// Share Extension entry point. Lives in a separate process from the main app, with
-/// limited memory (~120MB) and no access to the app's WKWebView cookie store. Its
-/// only job: pull the shared URL out of the input items, hand it off to the main
-/// app via the `reserch://transcribe?url=...` custom scheme, exit immediately.
-///
-/// All actual transcription (extractor + WhisperKit) happens back in the host app.
-/// This shape mirrors how Drafts, Bear, Apple Notes, and most "send-to-app" share
-/// extensions work — and it sidesteps every memory and entitlement limit Apple
-/// places on extensions.
+// MARK: - Confirmation UI
+
+enum ShareState {
+    case pending
+    case queued
+    case deeplink
+    case failed(String)
+}
+
+final class ShareStateModel: ObservableObject {
+    @Published var state: ShareState = .pending
+}
+
+private struct ShareConfirmationView: View {
+    @ObservedObject var model: ShareStateModel
+
+    var body: some View {
+        ZStack {
+            Color(red: 0.07, green: 0.09, blue: 0.13)
+                .ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                icon
+                    .foregroundStyle(iconColor)
+
+                Text(message)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+            }
+            .padding(32)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Color(red: 0.12, green: 0.14, blue: 0.19))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+            )
+            .padding(40)
+        }
+    }
+
+    @ViewBuilder
+    private var icon: some View {
+        switch model.state {
+        case .pending:
+            ProgressView()
+                .progressViewStyle(.circular)
+                .tint(.white.opacity(0.6))
+                .font(.system(size: 32))
+        case .queued:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 32))
+        case .deeplink:
+            Image(systemName: "arrow.up.forward.app.fill")
+                .font(.system(size: 32))
+        case .failed:
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 32))
+        }
+    }
+
+    private var iconColor: Color {
+        switch model.state {
+        case .pending:  return .white.opacity(0.5)
+        case .queued:   return Color(red: 0.2, green: 0.85, blue: 0.55)
+        case .deeplink: return Color(red: 0.4, green: 0.7, blue: 1.0)
+        case .failed:   return Color(red: 1.0, green: 0.4, blue: 0.4)
+        }
+    }
+
+    private var message: String {
+        switch model.state {
+        case .pending:          return "Saving to ReSerch\u{2026}"
+        case .queued:           return "Added to ReSerch"
+        case .deeplink:         return "Opening ReSerch\u{2026}"
+        case .failed(let msg):  return msg
+        }
+    }
+}
+
+// MARK: - Share Extension entry point
+
+/// Share Extension entry point. Pulls the shared URL from the input items,
+/// writes it to the App Group queue (preferred path — lets users "share and
+/// forget" without the app opening), or falls back to a deeplink launch.
+/// Shows a brief confirmation card so users know the share was received.
 final class ShareViewController: UIViewController {
 
     private let urlScheme = "reserch"
     private let transcribeHost = "transcribe"
 
-    // We don't show our own UI. The handoff is instant — the user already saw
-    // the share sheet, and the main app launching IS the visual feedback.
+    private let stateModel = ShareStateModel()
+    private var shareTask: Task<Void, Never>?
+
+    // MARK: - Lifecycle
+
     override func loadView() {
         view = UIView()
         view.backgroundColor = .clear
+
+        let hosting = UIHostingController(rootView: ShareConfirmationView(model: stateModel))
+        hosting.view.backgroundColor = .clear
+        hosting.view.translatesAutoresizingMaskIntoConstraints = false
+        addChild(hosting)
+        view.addSubview(hosting.view)
+        NSLayoutConstraint.activate([
+            hosting.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            hosting.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            hosting.view.topAnchor.constraint(equalTo: view.topAnchor),
+            hosting.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        hosting.didMove(toParent: self)
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        Task { await handleIncomingShare() }
+        shareTask = Task { await handleIncomingShare() }
+    }
+
+    deinit {
+        shareTask?.cancel()
     }
 
     // MARK: - Share handling
@@ -33,43 +134,47 @@ final class ShareViewController: UIViewController {
     @MainActor
     private func handleIncomingShare() async {
         guard let url = await firstSharedURL() else {
-            // No URL among the inputs — nothing useful we can do. Just exit cleanly
-            // so the user gets dropped back to where they were.
+            NSLog("[ReSerch Share] URL extraction failed — no supported URL in shared content")
+            stateModel.state = .failed("Couldn\u{2019}t find a link in this content.")
+            try? await Task.sleep(nanoseconds: 2_200_000_000)
             cancelExtension()
             return
         }
 
-        // Preferred path: write the URL to the App Group queue and exit silently.
-        // The host app drains the queue when it next foregrounds. This is what
-        // enables "share five posts in a row without leaving TikTok" — the user
-        // never gets pulled into ReSerch mid-scroll.
+        NSLog("[ReSerch Share] Extracted URL: %@", url.absoluteString)
+
+        // Preferred: write to App Group queue, exit silently.
         if SharedURLQueue.enqueue(url.absoluteString) {
+            NSLog("[ReSerch Share] Enqueued via App Group — will transcribe on next ReSerch foreground")
+            stateModel.state = .queued
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
             completeExtension()
             return
         }
 
-        // Fallback: App Group entitlement isn't installed yet (or the suite is
-        // misconfigured). Use the deeplink handoff so transcription still works
-        // — the host app launches and processes this single URL via onOpenURL.
+        // App Group unavailable — fall back to deeplink (forces app to foreground).
+        NSLog("[ReSerch Share] App Group unavailable — falling back to deeplink")
+
         guard let deepLink = makeDeepLink(for: url) else {
+            NSLog("[ReSerch Share] Failed to construct deeplink")
+            stateModel.state = .failed("Couldn\u{2019}t open ReSerch. Please try again.")
+            try? await Task.sleep(nanoseconds: 2_200_000_000)
             cancelExtension()
             return
         }
+
+        stateModel.state = .deeplink
         openHostApp(deepLink: deepLink)
     }
 
-    /// Walks every input item's attachments and returns the first URL we find.
-    /// Inputs can include text, plain strings, web pages, or "public.url"
-    /// attachments — TikTok/IG/YouTube share intents typically attach the post URL
-    /// as `public.url`, with the page title as text.
+    // MARK: - URL extraction
+
     private func firstSharedURL() async -> URL? {
         let items = (extensionContext?.inputItems ?? []).compactMap { $0 as? NSExtensionItem }
         for item in items {
             for provider in item.attachments ?? [] {
                 if let url = await loadURL(from: provider) { return url }
             }
-            // Some apps (TikTok in particular) put the link in plain text instead
-            // of attaching a URL provider. Scan the item's text for the first http(s) match.
             if let text = item.attributedContentText?.string,
                let extracted = firstURL(in: text) {
                 return extracted
@@ -117,20 +222,18 @@ final class ShareViewController: UIViewController {
         return comps.url
     }
 
-    /// `extensionContext.open(_:completionHandler:)` is the App Extension API for
-    /// asking the system to launch the host app at a custom URL. The system
-    /// surfaces a permission consent the first time, then remembers the choice.
     @MainActor
     private func openHostApp(deepLink: URL) {
         extensionContext?.open(deepLink) { [weak self] success in
-            // Whether the open succeeded or not, we're done with this extension
-            // instance. completeRequest cleans up our process and the user lands
-            // back in their previous app (or the freshly-opened ReSerch).
             DispatchQueue.main.async {
+                NSLog("[ReSerch Share] extensionContext.open result: %@", success ? "success" : "failed")
                 if success {
                     self?.completeExtension()
                 } else {
-                    self?.cancelExtension()
+                    self?.stateModel.state = .failed("Couldn\u{2019}t open ReSerch. Please launch it manually.")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+                        self?.cancelExtension()
+                    }
                 }
             }
         }

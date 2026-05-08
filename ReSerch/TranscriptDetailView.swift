@@ -33,13 +33,22 @@ struct TranscriptDetailView: View {
     /// side-peek panel. Distinct from `expandedID` on the legacy journal sheet
     /// because the side-peek and legacy sheet are separate UI surfaces.
     @State private var sidePeekExpandedNoteID: UUID?
+    @State private var sidePeekNoteEditBuffer: String = ""
+    @State private var sidePeekNoteOriginalText: String = ""
 
     enum SidePeekTab: Hashable { case info, notebook }
     @State private var showEditorComment = false
     @State private var showDocNoteEditor = false
+    @State private var editingAnnotationID: UUID? = nil
+    @State private var editingAnnotationBuffer: String = ""
+    @State private var editingMDHighlightText: String? = nil
+    @State private var editingMDHighlightBuffer: String = ""
+    @FocusState private var focusedAnnotationID: UUID?
+    @FocusState private var focusedMDHighlightText: String?
     @State private var gate = ExportGate.shared
     @State private var showPaywall = false
     @State private var showMoveToNotebook = false
+    @State private var showNotebookDetail = false
 
     private var youTubeVideoId: String? {
         guard let url = URL(string: entry.result.url) else { return nil }
@@ -124,12 +133,21 @@ struct TranscriptDetailView: View {
                         }
                     }
                 }
+                .sheet(isPresented: $showNotebookDetail) {
+                    if let notebookID = entry.notebookID,
+                       let nb = vm.notebooks.first(where: { $0.id == notebookID }) {
+                        NotebookDetailView(notebook: nb, vm: vm)
+                    }
+                }
                 .onChange(of: isEditing) { _, editing in
                     if editing {
                         editorActions.onRequestComment = { showEditorComment = true }
                     } else {
                         editorActions.onRequestComment = nil
                     }
+                }
+                .onChange(of: showDocNoteEditor) { _, showing in
+                    if showing { refreshEntry() }
                 }
             }
 
@@ -138,7 +156,11 @@ struct TranscriptDetailView: View {
                 Color.black.opacity(0.45)
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
-                    .onTapGesture { showDocNoteEditor = false }
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                            showDocNoteEditor = false
+                        }
+                    }
                     .transition(.opacity)
             }
 
@@ -151,7 +173,7 @@ struct TranscriptDetailView: View {
                     .transition(.move(edge: .trailing))
             }
         }
-        .animation(.easeInOut(duration: 0.28), value: showDocNoteEditor)
+        .animation(.spring(response: 0.32, dampingFraction: 0.88), value: showDocNoteEditor)
     }
 
     // Full-screen editor — nothing above it blocking scroll/editing
@@ -438,10 +460,10 @@ struct TranscriptDetailView: View {
                 showDocNoteEditor = true
             } label: {
                 HStack(spacing: 10) {
-                    Image(systemName: count == 0 ? "square.and.pencil" : "note.text")
+                    Image(systemName: (count == 0 && !hasAnyHighlights) ? "square.and.pencil" : "note.text")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(.white.opacity(0.55))
-                    Text(count == 0 ? "Add a transcript note" : "See transcript notes (\(count))")
+                    Text(notesButtonLabel(noteCount: count))
                         .font(.system(size: 14))
                         .foregroundStyle(.white.opacity(0.55))
                     Spacer()
@@ -476,6 +498,12 @@ struct TranscriptDetailView: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(.gray)
                     .textCase(.uppercase)
+                Text("·")
+                    .font(.caption)
+                    .foregroundStyle(.gray.opacity(0.6))
+                Text(DateFormatter.noteHeading.string(from: note.updatedAt))
+                    .font(.caption)
+                    .foregroundStyle(.gray.opacity(0.7))
             }
             Text(note.text)
                 .font(.system(size: 15))
@@ -547,25 +575,6 @@ struct TranscriptDetailView: View {
                 Text("\(entry.result.transcript.split(separator: " ").count) words")
                     .font(.caption2)
                     .foregroundStyle(.gray)
-                // Highlights button with count badge — hidden on carousel transcripts
-                // because AnnotableTranscriptView (which annotations live in) isn't shown.
-                if !isCarouselTranscript {
-                    Button {
-                        showAnnotations = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "highlighter")
-                            if !entry.result.annotations.isEmpty {
-                                Text("\(entry.result.annotations.count)")
-                                    .font(.caption2)
-                            }
-                        }
-                        .font(.system(size: 13))
-                        .foregroundStyle(entry.result.annotations.isEmpty ? Color(white: 0.5) : Color.yellow.opacity(0.9))
-                        .padding(6)
-                        .background(Color(white: 0.15), in: RoundedRectangle(cornerRadius: 6))
-                    }
-                }
                 // Pencil edit button — drops into raw markdown editor for both regular
                 // transcripts and carousels (lets user fix OCR mistakes).
                 Button {
@@ -707,29 +716,29 @@ struct TranscriptDetailView: View {
                 DragGesture(minimumDistance: 24)
                     .onEnded { value in
                         if value.translation.width > 60 {
-                            showDocNoteEditor = false
+                            withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+                                showDocNoteEditor = false
+                            }
                         }
                     }
             )
         }
     }
 
-    /// Two-segment Picker at the top of the panel — switches between an Info
-    /// tab (document notes + highlights for this transcript) and a Notebook tab
-    /// (which notebook this transcript is filed in, with option to move).
     private var sidePeekTabBar: some View {
         Picker("View", selection: $sidePeekTab) {
-            Text("Info").tag(SidePeekTab.info)
-            Text("Notebook \(entry.result.annotations.count)").tag(SidePeekTab.notebook)
+            Text(entry.result.annotations.isEmpty ? "Annotations" : "Annotations (\(entry.result.annotations.count))")
+                .tag(SidePeekTab.info)
+            Text("Notebook").tag(SidePeekTab.notebook)
         }
         .pickerStyle(.segmented)
     }
 
-    // MARK: - Info tab content
+    // MARK: - Annotations tab content
 
     private var documentNoteSidePeekSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Document Note")
+            Text("Transcript Note")
                 .font(.caption)
                 .fontWeight(.semibold)
                 .foregroundStyle(.white.opacity(0.55))
@@ -743,9 +752,11 @@ struct TranscriptDetailView: View {
                     refreshEntry()
                     if let id = newID {
                         sidePeekExpandedNoteID = id
+                        sidePeekNoteEditBuffer = ""
+                        sidePeekNoteOriginalText = ""
                     }
                 } label: {
-                    Text("Add document note")
+                    Text("Add note")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(.white.opacity(0.85))
                         .frame(maxWidth: .infinity)
@@ -767,6 +778,8 @@ struct TranscriptDetailView: View {
                     refreshEntry()
                     if let id = newID {
                         sidePeekExpandedNoteID = id
+                        sidePeekNoteEditBuffer = ""
+                        sidePeekNoteOriginalText = ""
                     }
                 } label: {
                     HStack(spacing: 8) {
@@ -788,16 +801,116 @@ struct TranscriptDetailView: View {
         }
     }
 
+    private var markdownHighlights: [String] {
+        guard let rx = try? NSRegularExpression(
+            pattern: #"==(.+?)==(?!\[\^)"#,
+            options: .dotMatchesLineSeparators
+        ) else { return [] }
+        let text = entry.result.transcript
+        let ns = text as NSString
+        return rx.matches(in: text, range: NSRange(location: 0, length: ns.length))
+            .map { ns.substring(with: $0.range(at: 1)) }
+    }
+
+    // Parses ==text==[^n] + footnote definitions from the transcript, mirroring
+    // AnnotationsPanel.parseEditorHighlights(). Returns tuples so comments travel with text.
+    private var editorParsedHighlights: [(text: String, comment: String)] {
+        let source = entry.result.transcript
+        guard !source.isEmpty,
+              let refRx  = try? NSRegularExpression(pattern: #"==(.+?)==\[\^(\d+)\]"#, options: .dotMatchesLineSeparators),
+              let defRx  = try? NSRegularExpression(pattern: #"^\[\^(\d+)\]: (.+)$"#, options: .anchorsMatchLines)
+        else { return [] }
+        let ns = source as NSString
+        let full = NSRange(location: 0, length: ns.length)
+
+        var comments: [String: String] = [:]
+        for m in defRx.matches(in: source, range: full) {
+            let idx = ns.substring(with: m.range(at: 1))
+            let val = ns.substring(with: m.range(at: 2))
+            comments[idx] = val
+        }
+
+        return refRx.matches(in: source, range: full).compactMap { m in
+            guard m.numberOfRanges >= 3 else { return nil }
+            let text = ns.substring(with: m.range(at: 1))
+            let idx  = ns.substring(with: m.range(at: 2))
+            return (text: text, comment: comments[idx] ?? "")
+        }
+    }
+
+    private var hasAnyHighlights: Bool {
+        !entry.result.annotations.isEmpty || !markdownHighlights.isEmpty || !editorParsedHighlights.isEmpty
+    }
+
+    private func notesButtonLabel(noteCount: Int) -> String {
+        let hasNotes = noteCount > 0
+        switch (hasNotes, hasAnyHighlights) {
+        case (false, false): return "Add a transcript note"
+        case (true,  false): return "See transcript notes (\(noteCount))"
+        case (false, true):  return "See highlights"
+        case (true,  true):  return "See notes & highlights"
+        }
+    }
+
+    private func shareHighlights() {
+        var sections: [String] = []
+
+        let template = ExportTemplatePrefs.shared
+        let dateFmt  = template.highlightDateFormat
+        let use24h   = template.highlightUse24HourTime
+        for ann in entry.result.annotations {
+            var block = ""
+            if let stamp = dateFmt.string(from: ann.createdAt, use24h: use24h) { block = stamp + "\n" }
+            block += ann.text
+            if !ann.comment.isEmpty { block += "\n\n- " + ann.comment }
+            sections.append(block)
+        }
+        for text in markdownHighlights {
+            sections.append(text)
+        }
+        for h in editorParsedHighlights {
+            var block = h.text
+            if !h.comment.isEmpty { block += "\n\n- " + h.comment }
+            sections.append(block)
+        }
+
+        let content = sections.joined(separator: "\n\n")
+        let av = UIActivityViewController(activityItems: [content], applicationActivities: nil)
+        if let popover = av.popoverPresentationController,
+           let window = UIApplication.shared.keyForegroundWindow {
+            popover.sourceView = window
+            popover.sourceRect = CGRect(x: window.bounds.midX, y: window.bounds.maxY - 60, width: 0, height: 0)
+            popover.permittedArrowDirections = []
+        }
+        guard let root = UIApplication.shared.keyForegroundWindow?.rootViewController else { return }
+        root.topmostPresentedViewController.present(av, animated: true)
+    }
+
     private var highlightsSidePeekSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Highlights")
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(.white.opacity(0.55))
-                .textCase(.uppercase)
-                .tracking(0.6)
+            HStack {
+                Text("Highlights")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white.opacity(0.55))
+                    .textCase(.uppercase)
+                    .tracking(0.6)
+                Spacer()
+                if hasAnyHighlights {
+                    Button {
+                        shareHighlights()
+                    } label: {
+                        Text("Export")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
 
-            if entry.result.annotations.isEmpty {
+            if !hasAnyHighlights {
                 Text("Long-press text in the transcript to highlight or comment on it.")
                     .font(.system(size: 13))
                     .foregroundStyle(.white.opacity(0.4))
@@ -806,8 +919,115 @@ struct TranscriptDetailView: View {
                 ForEach(entry.result.annotations) { ann in
                     sidePeekHighlightCard(ann)
                 }
+                ForEach(markdownHighlights, id: \.self) { text in
+                    sidePeekMarkdownHighlightCard(text)
+                }
+                ForEach(editorParsedHighlights, id: \.text) { h in
+                    sidePeekMarkdownHighlightCard(h.text, comment: h.comment, isEditable: true)
+                }
             }
         }
+    }
+
+    // isEditable = true only for ==text==[^n] highlights (footnote-backed, comment can be stored).
+    // Plain ==text== highlights have no storage so they are read-only.
+    @ViewBuilder
+    private func sidePeekMarkdownHighlightCard(_ text: String, comment: String = "", isEditable: Bool = false) -> some View {
+        let isEditing = isEditable && editingMDHighlightText == text
+        let accentBlue = Color(red: 0.35, green: 0.75, blue: 1.0)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 10) {
+                Rectangle()
+                    .fill(Color.yellow.opacity(0.45))
+                    .frame(width: 3)
+                Text(text)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if isEditing {
+                TextEditor(text: $editingMDHighlightBuffer)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .scrollContentBackground(.hidden)
+                    .background(Color.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
+                    .frame(minHeight: 72)
+                    .padding(.leading, 13)
+                    .padding(.top, 4)
+                    .focused($focusedMDHighlightText, equals: text)
+
+                HStack(spacing: 0) {
+                    Spacer()
+                    Button("Cancel") {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                            editingMDHighlightText = nil
+                            editingMDHighlightBuffer = ""
+                        }
+                        focusedMDHighlightText = nil
+                    }
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .frame(minWidth: 60, minHeight: 44)
+                    .contentShape(Rectangle())
+                    .buttonStyle(PressScaleButtonStyle())
+
+                    Button("Save") {
+                        let trimmed = editingMDHighlightBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                        saveMarkdownHighlightComment(highlightText: text, newComment: trimmed)
+                        editingMDHighlightText = nil
+                        editingMDHighlightBuffer = ""
+                        focusedMDHighlightText = nil
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(accentBlue)
+                    .frame(minWidth: 60, minHeight: 44)
+                    .contentShape(Rectangle())
+                    .buttonStyle(PressScaleButtonStyle())
+                }
+                .padding(.leading, 13)
+            } else if isEditable {
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                        editingMDHighlightText = text
+                        editingMDHighlightBuffer = comment
+                        editingAnnotationID = nil
+                    }
+                    focusedMDHighlightText = text
+                } label: {
+                    Text(comment.isEmpty ? "Add a comment\u{2026}" : comment)
+                        .font(.system(size: 13))
+                        .foregroundStyle(comment.isEmpty ? .white.opacity(0.28) : .white.opacity(0.55))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 13)
+                        .padding(.top, 4)
+                        .padding(.bottom, 4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else if !comment.isEmpty {
+                Text(comment)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 13)
+                    .padding(.top, 4)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(isEditing ? 0.05 : 0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(
+                    isEditing ? accentBlue.opacity(0.4) : Color.white.opacity(0.07),
+                    lineWidth: 1
+                )
+        )
+        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: isEditing)
     }
 
     private var notebookSidePeekSection: some View {
@@ -821,21 +1041,30 @@ struct TranscriptDetailView: View {
 
             if let notebookID = entry.notebookID,
                let nb = vm.notebooks.first(where: { $0.id == notebookID }) {
-                HStack(spacing: 10) {
-                    Circle()
-                        .fill(nb.color)
-                        .frame(width: 10, height: 10)
-                    Text(nb.name)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.92))
-                    Spacer()
+                Button {
+                    showNotebookDetail = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Circle()
+                            .fill(nb.color)
+                            .frame(width: 10, height: 10)
+                        Text(nb.name)
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.92))
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.3))
+                    }
+                    .padding(.vertical, 14)
+                    .padding(.horizontal, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white.opacity(0.04))
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 12))
                 }
-                .padding(.vertical, 14)
-                .padding(.horizontal, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.white.opacity(0.04))
-                )
+                .buttonStyle(.plain)
             } else {
                 Text("Unfiled — this transcript isn't in a notebook yet.")
                     .font(.system(size: 13))
@@ -868,18 +1097,7 @@ struct TranscriptDetailView: View {
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.45))
                 Spacer()
-                if expanded {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.18)) { sidePeekExpandedNoteID = nil }
-                    } label: {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(Color.accentColor)
-                            .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.borderless)
-                } else {
+                if !expanded {
                     Menu {
                         Button {
                             if note.isPinned {
@@ -915,19 +1133,49 @@ struct TranscriptDetailView: View {
             }
 
             if expanded {
-                let binding = Binding<String>(
-                    get: { entry.documentNotes.first(where: { $0.id == note.id })?.text ?? "" },
-                    set: { newValue in
-                        vm.updateDocumentNote(entry, noteID: note.id, text: newValue)
-                        refreshEntry()
-                    }
-                )
-                TextEditor(text: binding)
+                TextEditor(text: $sidePeekNoteEditBuffer)
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 110, maxHeight: 240)
                     .font(.system(size: 15))
                     .foregroundStyle(.white.opacity(0.92))
                     .tint(Color.accentColor)
+
+                HStack(spacing: 10) {
+                    Button {
+                        vm.updateDocumentNote(entry, noteID: note.id, text: sidePeekNoteOriginalText)
+                        refreshEntry()
+                        withAnimation(.easeInOut(duration: 0.18)) { sidePeekExpandedNoteID = nil }
+                    } label: {
+                        Text("Cancel")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.6))
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 44)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white.opacity(0.06))
+                            )
+                    }
+                    .buttonStyle(PressScaleButtonStyle())
+
+                    Button {
+                        vm.updateDocumentNote(entry, noteID: note.id, text: sidePeekNoteEditBuffer)
+                        refreshEntry()
+                        withAnimation(.easeInOut(duration: 0.18)) { sidePeekExpandedNoteID = nil }
+                    } label: {
+                        Text("Save")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 44)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.accentColor)
+                            )
+                    }
+                    .buttonStyle(PressScaleButtonStyle())
+                }
+                .padding(.top, 4)
             } else {
                 Text(note.text.isEmpty ? "Empty note — tap to edit" : note.text)
                     .font(.system(size: 15))
@@ -951,17 +1199,21 @@ struct TranscriptDetailView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
+            guard !expanded else { return }
+            let currentText = entry.documentNotes.first(where: { $0.id == note.id })?.text ?? ""
+            sidePeekNoteEditBuffer = currentText
+            sidePeekNoteOriginalText = currentText
             withAnimation(.easeInOut(duration: 0.18)) {
-                sidePeekExpandedNoteID = expanded ? nil : note.id
+                sidePeekExpandedNoteID = note.id
             }
         }
     }
 
     @ViewBuilder
     private func sidePeekHighlightCard(_ ann: Annotation) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Quoted highlight text — left bar + serif-feeling weight to read
-            // as a quotation, like Readwise / Books inspector cards.
+        let isEditing = editingAnnotationID == ann.id
+        let accentBlue = Color(red: 0.35, green: 0.75, blue: 1.0)
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 10) {
                 Rectangle()
                     .fill(Color.yellow.opacity(0.45))
@@ -971,24 +1223,79 @@ struct TranscriptDetailView: View {
                     .foregroundStyle(.white.opacity(0.92))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if !ann.comment.isEmpty {
-                Text(ann.comment)
+
+            if isEditing {
+                TextEditor(text: $editingAnnotationBuffer)
                     .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.65))
-                    .padding(.leading, 13) // line up with quoted text indent
+                    .foregroundStyle(.white.opacity(0.9))
+                    .scrollContentBackground(.hidden)
+                    .background(Color.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
+                    .frame(minHeight: 72)
+                    .padding(.leading, 13)
                     .padding(.top, 4)
+                    .focused($focusedAnnotationID, equals: ann.id)
+
+                HStack(spacing: 0) {
+                    Spacer()
+                    Button("Cancel") {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                            editingAnnotationID = nil
+                            editingAnnotationBuffer = ""
+                        }
+                        focusedAnnotationID = nil
+                    }
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .frame(minWidth: 60, minHeight: 44)
+                    .contentShape(Rectangle())
+                    .buttonStyle(PressScaleButtonStyle())
+
+                    Button("Save") {
+                        saveAnnotationComment(ann)
+                        focusedAnnotationID = nil
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(accentBlue)
+                    .frame(minWidth: 60, minHeight: 44)
+                    .contentShape(Rectangle())
+                    .buttonStyle(PressScaleButtonStyle())
+                }
+                .padding(.leading, 13)
+            } else {
+                Button {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                        editingAnnotationID = ann.id
+                        editingAnnotationBuffer = ann.comment
+                        editingMDHighlightText = nil
+                    }
+                    focusedAnnotationID = ann.id
+                } label: {
+                    Text(ann.comment.isEmpty ? "Add a comment\u{2026}" : ann.comment)
+                        .font(.system(size: 13))
+                        .foregroundStyle(ann.comment.isEmpty ? .white.opacity(0.28) : .white.opacity(0.65))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 13)
+                        .padding(.top, 4)
+                        .padding(.bottom, 4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.04))
+                .fill(Color.white.opacity(isEditing ? 0.05 : 0.04))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.white.opacity(0.07), lineWidth: 1)
+                .strokeBorder(
+                    isEditing ? accentBlue.opacity(0.4) : Color.white.opacity(0.07),
+                    lineWidth: 1
+                )
         )
+        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: isEditing)
     }
 
     private func sidePeekTimestamp(for note: DocumentNote) -> String {
@@ -1001,6 +1308,48 @@ struct TranscriptDetailView: View {
         if let updated = vm.history.first(where: { $0.id == entry.id }) {
             entry = updated
         }
+    }
+
+    private func saveAnnotationComment(_ ann: Annotation) {
+        let trimmed = editingAnnotationBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let idx = entry.result.annotations.firstIndex(where: { $0.id == ann.id }) {
+            entry.result.annotations[idx].comment = trimmed
+            vm.updateEntry(entry)
+        }
+        editingAnnotationID = nil
+        editingAnnotationBuffer = ""
+    }
+
+    // Returns the footnote index string (e.g. "1") for a given highlight text,
+    // used to locate the [^n]: definition line in the raw transcript.
+    private func footnoteIndex(for highlightText: String) -> String? {
+        guard let rx = try? NSRegularExpression(
+            pattern: #"==(.+?)==\[\^(\d+)\]"#,
+            options: .dotMatchesLineSeparators
+        ) else { return nil }
+        let ns = entry.result.transcript as NSString
+        let full = NSRange(location: 0, length: ns.length)
+        for m in rx.matches(in: entry.result.transcript, range: full) {
+            if ns.substring(with: m.range(at: 1)) == highlightText {
+                return ns.substring(with: m.range(at: 2))
+            }
+        }
+        return nil
+    }
+
+    // Replaces the [^n]: ... footnote definition in the raw transcript for the
+    // given highlight text. This is the canonical storage for ==text==[^n] comment
+    // edits — the markdown export reads directly from the transcript, so this keeps
+    // exports automatically in sync without any additional formatting pass.
+    private func saveMarkdownHighlightComment(highlightText: String, newComment: String) {
+        guard let idx = footnoteIndex(for: highlightText) else { return }
+        let prefix = "[^\(idx)]: "
+        let lines = entry.result.transcript.components(separatedBy: "\n")
+        entry.result.transcript = lines.map { line in
+            line.hasPrefix(prefix) ? prefix + newComment : line
+        }.joined(separator: "\n")
+        vm.updateEntry(entry)
+        refreshEntry()
     }
 
     /// Best-effort top safe-area inset (status bar + dynamic island). Used to
@@ -1314,6 +1663,16 @@ struct TranscriptDetailView: View {
     }
 }
 
+// MARK: - Shared Button Style
+
+private struct PressScaleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
 // MARK: - Document Note Editor
 
 private struct DocumentNoteEditor: View {
@@ -1355,7 +1714,7 @@ private struct DocumentNoteEditor: View {
                 .background(Color(red: 0.09, green: 0.11, blue: 0.15))
             }
             .background(Color(red: 0.07, green: 0.09, blue: 0.13).ignoresSafeArea())
-            .navigationTitle("Document Note")
+            .navigationTitle("Transcript Note")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

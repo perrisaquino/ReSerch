@@ -10,7 +10,13 @@ final class IAPManager {
     static let allProductIDs     = [lifetimeProductID, monthlyProductID]
 
     var products: [Product] = []
-    var isPro: Bool = false
+    /// Backing store for the StoreKit entitlement state.
+    /// Read isPro instead — it also returns true for TestFlight beta builds.
+    private var _isPro: Bool = false
+    /// True when the user has an active purchase OR when running under TestFlight.
+    /// App Store production builds and App Review (which uses the production receipt)
+    /// are unaffected — only sandboxReceipt installs (TestFlight) get the bypass.
+    var isPro: Bool { _isPro || ExportGate.isTestFlight }
     var purchaseError: String?
 
     private var updatesTask: Task<Void, Never>?
@@ -57,7 +63,7 @@ final class IAPManager {
                 pro = true
             }
         }
-        isPro = pro
+        _isPro = pro
     }
 
     @MainActor
@@ -107,13 +113,13 @@ final class IAPManager {
     @MainActor
     func debugSimulatePurchase() {
         NSLog("[IAP] DEBUG simulating purchase — flipping isPro = true")
-        isPro = true
+        _isPro = true
     }
 
     @MainActor
     func debugRevertPurchase() {
         NSLog("[IAP] DEBUG revert — flipping isPro = false")
-        isPro = false
+        _isPro = false
     }
     #endif
 }

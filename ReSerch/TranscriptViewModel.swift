@@ -635,7 +635,7 @@ final class TranscriptViewModel {
 
     func markdownFor(_ entry: TranscriptEntry) -> String {
         let nb = notebook(for: entry.notebookID)
-        return MarkdownFormatter.format(entry.result, notebook: nb, notes: entry.documentNotes)
+        return MarkdownFormatter.format(entry.result, notebook: nb, notes: entry.documentNotes, template: ExportTemplatePrefs.shared, capturedAt: entry.date)
     }
 
     /// Compiles every transcript in `notebook` into a single markdown document, separated by `---`.

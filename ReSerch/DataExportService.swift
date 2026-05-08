@@ -83,7 +83,7 @@ struct DataExportService {
         var usedNames = Set<String>()
         for entry in history {
             let filename = uniqueFilename(for: entry, used: &usedNames)
-            let markdown = MarkdownFormatter.format(entry.result)
+            let markdown = MarkdownFormatter.format(entry.result, notebook: nil, notes: entry.documentNotes, template: ExportTemplatePrefs.shared, capturedAt: entry.date)
             try markdown.write(to: dir.appendingPathComponent(filename), atomically: true, encoding: .utf8)
         }
     }
@@ -110,7 +110,7 @@ struct DataExportService {
             let filename = uniqueFilename(for: entry, used: &used)
             perNotebookUsed[notebookID] = used
 
-            let markdown = MarkdownFormatter.format(entry.result)
+            let markdown = MarkdownFormatter.format(entry.result, notebook: nb, notes: entry.documentNotes, template: ExportTemplatePrefs.shared, capturedAt: entry.date)
             try markdown.write(to: folder.appendingPathComponent(filename), atomically: true, encoding: .utf8)
         }
     }
