@@ -22,9 +22,6 @@ struct CarouselCleanTranscriptView: View {
     /// Fired when the user picks "Add Note" from the highlight menu. Caller routes to
     /// the comment-entry sheet, then persists with the slide index when confirmed.
     var onAddNote: ((_ text: String, _ offset: Int, _ slideIndex: Int) -> Void)? = nil
-    /// Fires on a single tap inside any slide's text when no selection is active.
-    /// Used by the parent transcript detail view to enter edit mode.
-    var onTap: (() -> Void)? = nil
 
     var body: some View {
         if slides.isEmpty {
@@ -73,12 +70,7 @@ struct CarouselCleanTranscriptView: View {
                     },
                     onAddNote: { text, offset in
                         onAddNote?(text, offset, slide.index)
-                    },
-                    // Slide-relative tap index doesn't map to a meaningful
-                    // position in the carousel's full raw markdown (which has
-                    // ### Slide N headers between slides), so discard the index
-                    // and just signal "enter edit mode" to the parent.
-                    onTap: { _ in onTap?() }
+                    }
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {

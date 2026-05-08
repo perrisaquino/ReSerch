@@ -19,10 +19,6 @@ struct TranscriptDetailView: View {
     /// highlight came from a carousel slide so the eventual Annotation gets the
     /// matching slideIndex.
     @State private var pendingHighlightSlideIndex: Int?
-    /// Character index where the editor's cursor should land when edit mode is
-    /// entered. Set by tap-to-edit so the caret appears under the user's
-    /// finger; nil falls back to UITextView's default (end of text).
-    @State private var pendingEditCursor: Int?
     /// Set when the user is editing the comment on an existing annotation (from
     /// AnnotableTranscriptView's "Add Note" on text that's already highlighted).
     /// nil = creating a new annotation.
@@ -229,7 +225,7 @@ struct TranscriptDetailView: View {
 
             Divider().background(Color.white.opacity(0.08))
 
-            MarkdownTextEditor(text: $editingText, actions: editorActions, initialCursor: pendingEditCursor)
+            MarkdownTextEditor(text: $editingText, actions: editorActions)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(red: 0.07, green: 0.09, blue: 0.13))
         }
@@ -441,34 +437,21 @@ struct TranscriptDetailView: View {
 
             // Tappable video URL
             if let videoURL = URL(string: entry.result.url) {
-                HStack(spacing: 10) {
-                    Button {
-                        UIApplication.shared.open(videoURL)
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "play.circle")
-                                .font(.caption)
-                            Text("See Post")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                            Image(systemName: "arrow.up.right")
-                                .font(.caption2)
-                        }
-                        .foregroundStyle(Color.accentColor.opacity(0.9))
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        UIPasteboard.general.string = entry.result.url
-                    } label: {
-                        Image(systemName: "link")
+                Button {
+                    UIApplication.shared.open(videoURL)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "play.circle")
                             .font(.caption)
-                            .foregroundStyle(.gray)
-                            .padding(5)
-                            .background(Color(white: 0.15), in: RoundedRectangle(cornerRadius: 5))
+                        Text("See Post")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption2)
                     }
-                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor.opacity(0.9))
                 }
+                .buttonStyle(.plain)
             }
 
             Divider().background(Color.white.opacity(0.1))
@@ -620,16 +603,18 @@ struct TranscriptDetailView: View {
                 Text("\(entry.result.transcript.split(separator: " ").count) words")
                     .font(.caption2)
                     .foregroundStyle(.gray)
-                // Pencil edit button — drops into raw markdown editor for both regular
+                // Edit button — drops into raw markdown editor for both regular
                 // transcripts and carousels (lets user fix OCR mistakes).
                 Button {
                     enterEditMode()
                 } label: {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Color(white: 0.5))
-                        .padding(6)
-                        .background(Color(white: 0.15), in: RoundedRectangle(cornerRadius: 6))
+                    Text("Edit")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color(white: 0.78))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color(white: 0.15), in: RoundedRectangle(cornerRadius: 7))
                 }
             }
 
@@ -653,8 +638,7 @@ struct TranscriptDetailView: View {
                         pendingHighlightOffset = offset
                         pendingHighlightSlideIndex = slideIndex
                         showNoteInput = true
-                    },
-                    onTap: { enterEditMode() }
+                    }
                 )
             } else {
                 AnnotableTranscriptView(
@@ -682,8 +666,7 @@ struct TranscriptDetailView: View {
                             pendingExistingComment = ""
                         }
                         showNoteInput = true
-                    },
-                    onTap: { idx in enterEditMode(cursor: idx) }
+                    }
                 )
             }
         }
@@ -1228,21 +1211,19 @@ struct TranscriptDetailView: View {
                     .foregroundStyle(.white.opacity(0.92))
                     .tint(Color.accentColor)
 
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Spacer()
                     Button {
                         vm.updateDocumentNote(entry, noteID: note.id, text: sidePeekNoteOriginalText)
                         refreshEntry()
                         withAnimation(.easeInOut(duration: 0.18)) { sidePeekExpandedNoteID = nil }
                     } label: {
                         Text("Cancel")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(.white.opacity(0.6))
-                            .frame(maxWidth: .infinity)
-                            .frame(minHeight: 44)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color.white.opacity(0.06))
-                            )
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(PressScaleButtonStyle())
 
@@ -1252,18 +1233,15 @@ struct TranscriptDetailView: View {
                         withAnimation(.easeInOut(duration: 0.18)) { sidePeekExpandedNoteID = nil }
                     } label: {
                         Text("Save")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity)
-                            .frame(minHeight: 44)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color.accentColor)
-                            )
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(Capsule().fill(Color.accentColor))
                     }
                     .buttonStyle(PressScaleButtonStyle())
                 }
-                .padding(.top, 4)
+                .padding(.top, 6)
             } else {
                 Text(note.text.isEmpty ? "Empty note — tap to edit" : note.text)
                     .font(.system(size: 15))
@@ -1399,13 +1377,9 @@ struct TranscriptDetailView: View {
     }
 
     /// Drops into the focused markdown editor with the transcript loaded.
-    /// Same effect as tapping the pencil icon — used by the tap-anywhere-on-transcript
-    /// affordance so users don't have to hit the small pencil hit target.
-    /// Pass a `cursor` index to seed the editor's caret at that character offset
-    /// (so tap-to-edit lands the cursor where the user tapped instead of the end).
-    private func enterEditMode(cursor: Int? = nil) {
+    /// Triggered by the Edit button next to the Transcript header.
+    private func enterEditMode() {
         editingText = entry.result.transcript
-        pendingEditCursor = cursor
         isEditing = true
     }
 

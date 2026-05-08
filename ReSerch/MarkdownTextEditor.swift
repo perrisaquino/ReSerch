@@ -245,11 +245,6 @@ final class MarkdownEditorActions {
 struct MarkdownTextEditor: UIViewRepresentable {
     @Binding var text: String
     var actions: MarkdownEditorActions
-    /// Optional caret seed. When non-nil, the editor places the cursor at this
-    /// UTF-16 character offset on first responder activation instead of letting
-    /// UITextView default to the end. Used by tap-to-edit so the caret lands
-    /// where the user tapped on the read-only transcript.
-    var initialCursor: Int? = nil
 
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
@@ -277,18 +272,7 @@ struct MarkdownTextEditor: UIViewRepresentable {
         context.coordinator.toolbarVC = toolbarVC
 
         actions.textView = tv
-        let seedCursor = initialCursor
-        DispatchQueue.main.async {
-            tv.becomeFirstResponder()
-            if let seed = seedCursor {
-                let len = (tv.text as NSString).length
-                let safe = max(0, min(seed, len))
-                tv.selectedRange = NSRange(location: safe, length: 0)
-                // Make sure the caret is on screen — UITextView won't auto-scroll
-                // when selectedRange is set programmatically.
-                tv.scrollRangeToVisible(tv.selectedRange)
-            }
-        }
+        DispatchQueue.main.async { tv.becomeFirstResponder() }
         return tv
     }
 

@@ -8,12 +8,6 @@ struct AnnotableTranscriptView: UIViewRepresentable {
     let annotations: [Annotation]
     var onHighlight: ((String, Int) -> Void)?
     var onAddNote: ((String, Int) -> Void)?
-    /// Fires on a single tap when there's no active selection. Receives the
-    /// UTF-16 character index of the tap point in the underlying raw markdown
-    /// text, so the parent can position the editor's cursor there instead of
-    /// jumping to the end. Used by the transcript detail view to enter edit
-    /// mode without forcing the user to hit the tiny pencil icon.
-    var onTap: ((Int) -> Void)?
 
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
@@ -26,16 +20,6 @@ struct AnnotableTranscriptView: UIViewRepresentable {
         tv.textContainer.lineFragmentPadding = 0
         tv.dataDetectorTypes = []
         context.coordinator.textView = tv
-        // Tap gesture for "tap-to-edit". Delegate allows simultaneous recognition
-        // so UIKit's long-press-based text selection still works.
-        let tap = UITapGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleTap(_:))
-        )
-        tap.numberOfTapsRequired = 1
-        tap.cancelsTouchesInView = false
-        tap.delegate = context.coordinator
-        tv.addGestureRecognizer(tap)
         applyContent(to: tv)
         return tv
     }
@@ -43,7 +27,6 @@ struct AnnotableTranscriptView: UIViewRepresentable {
     func updateUIView(_ uiView: UITextView, context: Context) {
         context.coordinator.onHighlight = onHighlight
         context.coordinator.onAddNote   = onAddNote
-        context.coordinator.onTap       = onTap
         context.coordinator.annotations = annotations
         applyContent(to: uiView)
     }
@@ -55,7 +38,7 @@ struct AnnotableTranscriptView: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onHighlight: onHighlight, onAddNote: onAddNote, onTap: onTap, annotations: annotations)
+        Coordinator(onHighlight: onHighlight, onAddNote: onAddNote, annotations: annotations)
     }
 
     // MARK: - Private
@@ -97,46 +80,16 @@ struct AnnotableTranscriptView: UIViewRepresentable {
 
     // MARK: - Coordinator
 
-    final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate {
         weak var textView: UITextView?
         var onHighlight: ((String, Int) -> Void)?
         var onAddNote: ((String, Int) -> Void)?
-        var onTap: ((Int) -> Void)?
         var annotations: [Annotation]
 
-        init(onHighlight: ((String, Int) -> Void)?, onAddNote: ((String, Int) -> Void)?, onTap: ((Int) -> Void)?, annotations: [Annotation]) {
+        init(onHighlight: ((String, Int) -> Void)?, onAddNote: ((String, Int) -> Void)?, annotations: [Annotation]) {
             self.onHighlight = onHighlight
             self.onAddNote   = onAddNote
-            self.onTap       = onTap
             self.annotations = annotations
-        }
-
-        // MARK: - Tap-to-edit
-
-        @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
-            guard let tv = textView else { return }
-            // Suppress tap-to-edit while text is selected — that tap is the user
-            // dismissing the selection menu, not asking to enter edit mode.
-            if let range = tv.selectedTextRange, !range.isEmpty { return }
-            // Resolve the tap point to a character index so the parent can drop
-            // the editor's cursor exactly where the user tapped instead of
-            // jumping to the end of the transcript.
-            let point = recognizer.location(in: tv)
-            let index: Int
-            if let position = tv.closestPosition(to: point) {
-                index = tv.offset(from: tv.beginningOfDocument, to: position)
-            } else {
-                index = (tv.text as NSString).length
-            }
-            onTap?(max(0, index))
-        }
-
-        // Allow our tap to coexist with UIKit's long-press selection gestures.
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
-        ) -> Bool {
-            return true
         }
 
         @available(iOS 16.0, *)
