@@ -373,6 +373,7 @@ struct ContentView: View {
         }
         UIPasteboard.general.string = vm.markdownFor(entry)
         gate.recordExport()
+        vm.markExported(entry)
     }
 
 }
@@ -506,8 +507,8 @@ struct TranscriptRow: View {
                 }
             }
 
-            // Notebook chip + duration on one row when either is present
-            if notebook != nil || entry.result.duration != nil {
+            // Notebook chip + duration + exported indicator on one row when any are present
+            if notebook != nil || entry.result.duration != nil || entry.lastExportedAt != nil {
                 HStack(spacing: 8) {
                     if let nb = notebook {
                         HStack(spacing: 5) {
@@ -530,6 +531,18 @@ struct TranscriptRow: View {
                         }
                         .font(.caption2)
                         .foregroundStyle(.gray)
+                    }
+                    if entry.lastExportedAt != nil {
+                        // Exported marker — at-a-glance triage in Feed and Notebook lists.
+                        // Set by Main Copy / row Copy / Share. Long-press submenus do not set it.
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(Color.accentColor)
+                                .frame(width: 6, height: 6)
+                            Text("Exported")
+                                .font(.caption2)
+                                .foregroundStyle(Color.accentColor.opacity(0.85))
+                        }
                     }
                 }
             }

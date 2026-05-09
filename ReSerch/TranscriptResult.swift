@@ -300,9 +300,15 @@ struct TranscriptEntry: Identifiable, Hashable, Codable {
     /// then `updatedAt`.
     var documentNotes: [DocumentNote] = []
 
+    /// Stamp of the most recent export action (Main Copy, row Copy, or Share sheet).
+    /// Nil = never exported. Used by the row indicator + notebook filter chip to
+    /// triage which transcripts have been touched in a review pass.
+    var lastExportedAt: Date?
+
     enum CodingKeys: String, CodingKey {
         case id, result, date, notebookID
         case documentNotes
+        case lastExportedAt
         // Legacy field kept ONLY in the keys enum so the decoder can read it. Never
         // written by encode(). Idempotent re-saves naturally clean up old data.
         case documentNote
@@ -314,6 +320,7 @@ struct TranscriptEntry: Identifiable, Hashable, Codable {
         self.date = Date()
         self.notebookID = nil
         self.documentNotes = []
+        self.lastExportedAt = nil
     }
 
     // Custom decode supports three shapes simultaneously:
@@ -338,6 +345,8 @@ struct TranscriptEntry: Identifiable, Hashable, Codable {
         } else {
             documentNotes = []
         }
+
+        lastExportedAt = try c.decodeIfPresent(Date.self, forKey: .lastExportedAt)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -347,6 +356,7 @@ struct TranscriptEntry: Identifiable, Hashable, Codable {
         try c.encode(date, forKey: .date)
         try c.encodeIfPresent(notebookID, forKey: .notebookID)
         try c.encode(documentNotes, forKey: .documentNotes)
+        try c.encodeIfPresent(lastExportedAt, forKey: .lastExportedAt)
         // legacy `documentNote` deliberately not encoded
     }
 

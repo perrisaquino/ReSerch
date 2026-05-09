@@ -21,6 +21,11 @@ struct NotebookDetailView: View {
     @State private var showBulkMoveSheet = false
     @State private var showBulkDeleteConfirm = false
 
+    /// Triage filter for the row list. Persists per notebook so each notebook
+    /// remembers your last review pose. Storage key is computed from notebookID.
+    enum ExportFilter: String { case all, untouched, exported }
+    @State private var exportFilter: ExportFilter = .all
+
     /// "Add New" → presents AddTranscriptView pre-bound to this notebook.
     @State private var showAddTranscript = false
     /// "Add New" → presents ImportMediaSheet for audio/video imports, also
@@ -52,20 +57,32 @@ struct NotebookDetailView: View {
 
     @ViewBuilder
     private func content(notebook nb: Notebook) -> some View {
-        let entries = vm.transcripts(in: nb)
+        let allEntries = vm.transcripts(in: nb)
+        let entries: [TranscriptEntry] = {
+            switch exportFilter {
+            case .all:       return allEntries
+            case .untouched: return allEntries.filter { $0.lastExportedAt == nil }
+            case .exported:  return allEntries.filter { $0.lastExportedAt != nil }
+            }
+        }()
+        let exportedCount = allEntries.filter { $0.lastExportedAt != nil }.count
 
         ZStack {
             Color(red: 0.07, green: 0.09, blue: 0.13).ignoresSafeArea()
 
-            if entries.isEmpty {
+            if allEntries.isEmpty {
                 emptyState(for: nb)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        header(for: nb, entryCount: entries.count)
+                        header(for: nb, entryCount: allEntries.count)
                             .padding(.horizontal, 16)
                             .padding(.top, 8)
-                            .padding(.bottom, 16)
+                            .padding(.bottom, 12)
+
+                        filterChips(allCount: allEntries.count, exportedCount: exportedCount)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 12)
 
                         ForEach(entries) { entry in
                             TranscriptRow(
@@ -115,7 +132,7 @@ struct NotebookDetailView: View {
                     selectedIDs.removeAll()
                 }
                 .foregroundStyle(selectionMode ? Color.accentColor : .secondary)
-                .disabled(entries.isEmpty)
+                .disabled(allEntries.isEmpty)
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -141,7 +158,7 @@ struct NotebookDetailView: View {
                     } label: {
                         Label("Copy All", systemImage: "doc.on.doc")
                     }
-                    .disabled(entries.isEmpty)
+                    .disabled(allEntries.isEmpty)
                     Divider()
                     Button(role: .destructive) {
                         showDeleteConfirm = true
@@ -272,6 +289,44 @@ struct NotebookDetailView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    // MARK: - Filter chips (triage exported vs untouched)
+
+    @ViewBuilder
+    private func filterChips(allCount: Int, exportedCount: Int) -> some View {
+        let untouchedCount = max(0, allCount - exportedCount)
+        HStack(spacing: 6) {
+            filterChip(label: "All",       count: allCount,       active: exportFilter == .all)       { exportFilter = .all }
+            filterChip(label: "Untouched", count: untouchedCount, active: exportFilter == .untouched) { exportFilter = .untouched }
+            filterChip(label: "Exported",  count: exportedCount,  active: exportFilter == .exported)  { exportFilter = .exported }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func filterChip(label: String, count: Int, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(active ? .white.opacity(0.7) : Color(white: 0.45))
+            }
+            .foregroundStyle(active ? .white : Color(white: 0.62))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                active ? Color.accentColor.opacity(0.22) : Color.white.opacity(0.06),
+                in: Capsule()
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(active ? Color.accentColor.opacity(0.55) : Color.white.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .animation(.easeInOut(duration: 0.15), value: active)
+    }
+
     // MARK: - Add FAB (mirrors the Feed's bottom-trailing plus)
 
     private var addFAB: some View {
@@ -358,6 +413,7 @@ struct NotebookDetailView: View {
     private func copyMarkdown(for entry: TranscriptEntry) {
         let md = vm.markdownFor(entry)
         UIPasteboard.general.string = md
+        vm.markExported(entry)
     }
 
     private func exportAll(notebook nb: Notebook) {
@@ -548,5 +604,6 @@ struct UnfiledView: View {
     private func copyMarkdown(for entry: TranscriptEntry) {
         let md = vm.markdownFor(entry)
         UIPasteboard.general.string = md
+        vm.markExported(entry)
     }
 }
