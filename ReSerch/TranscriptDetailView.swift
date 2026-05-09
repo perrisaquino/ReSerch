@@ -1004,29 +1004,37 @@ struct TranscriptDetailView: View {
     private func sidePeekMarkdownHighlightCard(_ text: String, comment: String = "", isEditable: Bool = false) -> some View {
         let isEditing = isEditable && editingMDHighlightText == text
         let accentBlue = Color(red: 0.35, green: 0.75, blue: 1.0)
-        VStack(alignment: .leading, spacing: 6) {
+        let hlBar      = Color(red: 0.96, green: 0.65, blue: 0.12)
+        let hlTintBg   = Color(red: 0.96, green: 0.82, blue: 0.16).opacity(0.07)
+        let hlBorder   = Color(red: 0.96, green: 0.82, blue: 0.16).opacity(0.22)
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 10) {
                 Rectangle()
-                    .fill(Color.yellow.opacity(0.45))
-                    .frame(width: 3)
+                    .fill(hlBar.opacity(0.85))
+                    .frame(width: 4)
                 Text(text)
-                    .font(.system(size: 14))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.94))
+                    .lineSpacing(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if isEditing {
                 TextEditor(text: $editingMDHighlightBuffer)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white)
                     .scrollContentBackground(.hidden)
-                    .background(Color.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
-                    .frame(minHeight: 72)
-                    .padding(.leading, 13)
-                    .padding(.top, 4)
+                    .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.white.opacity(0.20), lineWidth: 1)
+                    )
+                    .frame(minHeight: 140)
+                    .padding(.leading, 14)
+                    .padding(.top, 6)
                     .focused($focusedMDHighlightText, equals: text)
 
-                HStack(spacing: 0) {
+                HStack(spacing: 4) {
                     Spacer()
                     Button("Cancel") {
                         withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
@@ -1035,9 +1043,9 @@ struct TranscriptDetailView: View {
                         }
                         focusedMDHighlightText = nil
                     }
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.45))
-                    .frame(minWidth: 60, minHeight: 44)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .frame(minWidth: 64, minHeight: 44)
                     .contentShape(Rectangle())
                     .buttonStyle(PressScaleButtonStyle())
 
@@ -1048,13 +1056,13 @@ struct TranscriptDetailView: View {
                         editingMDHighlightBuffer = ""
                         focusedMDHighlightText = nil
                     }
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(accentBlue)
-                    .frame(minWidth: 60, minHeight: 44)
+                    .frame(minWidth: 64, minHeight: 44)
                     .contentShape(Rectangle())
                     .buttonStyle(PressScaleButtonStyle())
                 }
-                .padding(.leading, 13)
+                .padding(.leading, 14)
             } else if isEditable {
                 Button {
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
@@ -1065,10 +1073,10 @@ struct TranscriptDetailView: View {
                     focusedMDHighlightText = text
                 } label: {
                     Text(comment.isEmpty ? "Add a comment\u{2026}" : comment)
-                        .font(.system(size: 13))
-                        .foregroundStyle(comment.isEmpty ? .white.opacity(0.28) : .white.opacity(0.55))
+                        .font(.system(size: 14))
+                        .foregroundStyle(comment.isEmpty ? .white.opacity(0.32) : .white.opacity(0.62))
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 13)
+                        .padding(.leading, 14)
                         .padding(.top, 4)
                         .padding(.bottom, 4)
                         .contentShape(Rectangle())
@@ -1212,10 +1220,15 @@ struct TranscriptDetailView: View {
             if expanded {
                 TextEditor(text: $sidePeekNoteEditBuffer)
                     .scrollContentBackground(.hidden)
-                    .frame(minHeight: 110, maxHeight: 240)
-                    .font(.system(size: 15))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .frame(minHeight: 160, maxHeight: 360)
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white)
                     .tint(Color.accentColor)
+                    .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
+                    )
 
                 HStack(spacing: 8) {
                     Spacer()
@@ -1225,7 +1238,7 @@ struct TranscriptDetailView: View {
                         withAnimation(.easeInOut(duration: 0.18)) { sidePeekExpandedNoteID = nil }
                     } label: {
                         Text("Cancel")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(.white.opacity(0.6))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
@@ -1239,7 +1252,7 @@ struct TranscriptDetailView: View {
                         withAnimation(.easeInOut(duration: 0.18)) { sidePeekExpandedNoteID = nil }
                     } label: {
                         Text("Save")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 7)
@@ -1249,21 +1262,46 @@ struct TranscriptDetailView: View {
                 }
                 .padding(.top, 6)
             } else {
-                Text(note.text.isEmpty ? "Empty note — tap to edit" : note.text)
-                    .font(.system(size: 15))
-                    .foregroundStyle(note.text.isEmpty ? .white.opacity(0.35) : .white.opacity(0.92))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+                // Collapsed view: truncate to 3 lines so long notes don't blow
+                // out the panel. Tap anywhere on the card to expand into edit
+                // mode; existing pruneEmptySidePeekNote handles auto-cleanup
+                // when the user collapses without typing anything.
+                Button {
+                    let currentText = entry.documentNotes.first(where: { $0.id == note.id })?.text ?? ""
+                    sidePeekNoteEditBuffer = currentText
+                    sidePeekNoteOriginalText = currentText
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        sidePeekExpandedNoteID = note.id
+                    }
+                } label: {
+                    HStack(alignment: .top, spacing: 6) {
+                        Text(note.text.isEmpty ? "Empty note — tap to edit" : note.text)
+                            .font(.system(size: 15))
+                            .foregroundStyle(note.text.isEmpty ? .white.opacity(0.35) : .white.opacity(0.88))
+                            .lineSpacing(2)
+                            .lineLimit(3)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if !note.text.isEmpty && noteIsTruncated(note.text) {
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.35))
+                                .padding(.top, 4)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 10)
                 .fill(Color.white.opacity(0.04))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(
                     note.isPinned ? Color.yellow.opacity(0.22) : Color.white.opacity(0.07),
                     lineWidth: 1
@@ -1285,29 +1323,35 @@ struct TranscriptDetailView: View {
     private func sidePeekHighlightCard(_ ann: Annotation) -> some View {
         let isEditing = editingAnnotationID == ann.id
         let accentBlue = Color(red: 0.35, green: 0.75, blue: 1.0)
-        return VStack(alignment: .leading, spacing: 6) {
+        let hlBar      = Color(red: 0.96, green: 0.65, blue: 0.12)
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 10) {
                 Rectangle()
-                    .fill(Color.yellow.opacity(0.45))
-                    .frame(width: 3)
+                    .fill(hlBar.opacity(0.85))
+                    .frame(width: 4)
                 Text(ann.text)
-                    .font(.system(size: 14))
-                    .foregroundStyle(.white.opacity(0.92))
+                    .font(.system(size: 15))
+                    .foregroundStyle(.white.opacity(0.94))
+                    .lineSpacing(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if isEditing {
                 TextEditor(text: $editingAnnotationBuffer)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.9))
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white)
                     .scrollContentBackground(.hidden)
-                    .background(Color.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
-                    .frame(minHeight: 72)
-                    .padding(.leading, 13)
-                    .padding(.top, 4)
+                    .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.white.opacity(0.20), lineWidth: 1)
+                    )
+                    .frame(minHeight: 140)
+                    .padding(.leading, 14)
+                    .padding(.top, 6)
                     .focused($focusedAnnotationID, equals: ann.id)
 
-                HStack(spacing: 0) {
+                HStack(spacing: 4) {
                     Spacer()
                     Button("Cancel") {
                         withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
@@ -1316,9 +1360,9 @@ struct TranscriptDetailView: View {
                         }
                         focusedAnnotationID = nil
                     }
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.45))
-                    .frame(minWidth: 60, minHeight: 44)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .frame(minWidth: 64, minHeight: 44)
                     .contentShape(Rectangle())
                     .buttonStyle(PressScaleButtonStyle())
 
@@ -1326,13 +1370,13 @@ struct TranscriptDetailView: View {
                         saveAnnotationComment(ann)
                         focusedAnnotationID = nil
                     }
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(accentBlue)
-                    .frame(minWidth: 60, minHeight: 44)
+                    .frame(minWidth: 64, minHeight: 44)
                     .contentShape(Rectangle())
                     .buttonStyle(PressScaleButtonStyle())
                 }
-                .padding(.leading, 13)
+                .padding(.leading, 14)
             } else {
                 Button {
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
@@ -1343,10 +1387,10 @@ struct TranscriptDetailView: View {
                     focusedAnnotationID = ann.id
                 } label: {
                     Text(ann.comment.isEmpty ? "Add a comment\u{2026}" : ann.comment)
-                        .font(.system(size: 13))
-                        .foregroundStyle(ann.comment.isEmpty ? .white.opacity(0.28) : .white.opacity(0.65))
+                        .font(.system(size: 14))
+                        .foregroundStyle(ann.comment.isEmpty ? .white.opacity(0.32) : .white.opacity(0.70))
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 13)
+                        .padding(.leading, 14)
                         .padding(.top, 4)
                         .padding(.bottom, 4)
                         .contentShape(Rectangle())
@@ -1387,6 +1431,16 @@ struct TranscriptDetailView: View {
     private func enterEditMode() {
         editingText = entry.result.transcript
         isEditing = true
+    }
+
+    /// Heuristic for "would this note get truncated at lineLimit(3)?" — drives
+    /// the chevron-down affordance on collapsed note cards. Goes character-count
+    /// then explicit-newline so single-paragraph dumps and multi-paragraph notes
+    /// both surface the indicator at the right threshold.
+    private func noteIsTruncated(_ text: String) -> Bool {
+        if text.contains("\n\n") { return true }
+        if text.filter({ $0 == "\n" }).count >= 3 { return true }
+        return text.count > 140
     }
 
     /// If the currently-expanded side-peek note ended up empty after trim, delete it.
