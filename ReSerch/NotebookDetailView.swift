@@ -96,6 +96,11 @@ struct NotebookDetailView: View {
                 }
             }
         }
+        .overlay(alignment: .bottomTrailing) {
+            if !selectionMode {
+                addFAB
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             if selectionMode && !selectedIDs.isEmpty {
                 bulkBar(notebook: nb)
@@ -111,29 +116,6 @@ struct NotebookDetailView: View {
                 }
                 .foregroundStyle(selectionMode ? Color.accentColor : .secondary)
                 .disabled(entries.isEmpty)
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button {
-                        showAddTranscript = true
-                    } label: {
-                        Label("Paste URL", systemImage: "link")
-                    }
-                    Button {
-                        importKind = .audio
-                    } label: {
-                        Label("Import Audio", systemImage: "waveform")
-                    }
-                    Button {
-                        importKind = .video
-                    } label: {
-                        Label("Import Video", systemImage: "video")
-                    }
-                } label: {
-                    Text("Add New")
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Color.accentColor)
-                }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -288,6 +270,39 @@ struct NotebookDetailView: View {
                 .padding(.horizontal, 40)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Add FAB (mirrors the Feed's bottom-trailing plus)
+
+    private var addFAB: some View {
+        Menu {
+            Button {
+                showAddTranscript = true
+            } label: {
+                Label("Paste URL", systemImage: "link")
+            }
+            Button {
+                importKind = .audio
+            } label: {
+                Label("Import Audio", systemImage: "waveform")
+            }
+            Button {
+                importKind = .video
+            } label: {
+                Label("Import Video", systemImage: "video")
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.title2)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white)
+                .frame(width: 56, height: 56)
+                .background(Color.accentColor, in: Circle())
+                .shadow(color: .black.opacity(0.4), radius: 8, y: 4)
+        }
+        .padding(24)
+        .sensoryFeedback(.selection, trigger: showAddTranscript)
+        .sensoryFeedback(.selection, trigger: importKind)
     }
 
     // MARK: - Bulk bar (multi-select)

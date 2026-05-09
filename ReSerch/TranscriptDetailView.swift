@@ -1064,24 +1064,13 @@ struct TranscriptDetailView: View {
                 }
                 .padding(.leading, 14)
             } else if isEditable {
-                Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                        editingMDHighlightText = text
-                        editingMDHighlightBuffer = comment
-                        editingAnnotationID = nil
-                    }
-                    focusedMDHighlightText = text
-                } label: {
-                    Text(comment.isEmpty ? "Add a comment\u{2026}" : comment)
-                        .font(.system(size: 14))
-                        .foregroundStyle(comment.isEmpty ? .white.opacity(0.32) : .white.opacity(0.62))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 14)
-                        .padding(.top, 4)
-                        .padding(.bottom, 4)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                Text(comment.isEmpty ? "Add a comment\u{2026}" : comment)
+                    .font(.system(size: 14))
+                    .foregroundStyle(comment.isEmpty ? .white.opacity(0.32) : .white.opacity(0.62))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 14)
+                    .padding(.top, 4)
+                    .padding(.bottom, 4)
             } else if !comment.isEmpty {
                 Text(comment)
                     .font(.system(size: 13))
@@ -1104,6 +1093,16 @@ struct TranscriptDetailView: View {
                     lineWidth: 1
                 )
         )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard isEditable, !isEditing else { return }
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                editingMDHighlightText = text
+                editingMDHighlightBuffer = comment
+                editingAnnotationID = nil
+            }
+            focusedMDHighlightText = text
+        }
         .animation(.spring(response: 0.28, dampingFraction: 0.82), value: isEditing)
     }
 
@@ -1378,24 +1377,13 @@ struct TranscriptDetailView: View {
                 }
                 .padding(.leading, 14)
             } else {
-                Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                        editingAnnotationID = ann.id
-                        editingAnnotationBuffer = ann.comment
-                        editingMDHighlightText = nil
-                    }
-                    focusedAnnotationID = ann.id
-                } label: {
-                    Text(ann.comment.isEmpty ? "Add a comment\u{2026}" : ann.comment)
-                        .font(.system(size: 14))
-                        .foregroundStyle(ann.comment.isEmpty ? .white.opacity(0.32) : .white.opacity(0.70))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.leading, 14)
-                        .padding(.top, 4)
-                        .padding(.bottom, 4)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                Text(ann.comment.isEmpty ? "Add a comment\u{2026}" : ann.comment)
+                    .font(.system(size: 14))
+                    .foregroundStyle(ann.comment.isEmpty ? .white.opacity(0.32) : .white.opacity(0.70))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 14)
+                    .padding(.top, 4)
+                    .padding(.bottom, 4)
             }
         }
         .padding(.horizontal, 14)
@@ -1411,6 +1399,16 @@ struct TranscriptDetailView: View {
                     lineWidth: 1
                 )
         )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard !isEditing else { return }
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                editingAnnotationID = ann.id
+                editingAnnotationBuffer = ann.comment
+                editingMDHighlightText = nil
+            }
+            focusedAnnotationID = ann.id
+        }
         .animation(.spring(response: 0.28, dampingFraction: 0.82), value: isEditing)
     }
 
@@ -1649,7 +1647,7 @@ struct TranscriptDetailView: View {
             // MD / Rich mode pill — sets the default the Copy button uses.
             // Mirrors the Settings → Default Format picker so power users can
             // flip mode mid-session without a settings detour.
-            HStack(spacing: 0) {
+            HStack(spacing: 2) {
                 modeTab(label: "MD",   active: !stylePrefs.richTextMode) {
                     stylePrefs.richTextMode = false; stylePrefs.save()
                 }
@@ -1657,7 +1655,12 @@ struct TranscriptDetailView: View {
                     stylePrefs.richTextMode = true; stylePrefs.save()
                 }
             }
-            .background(Color(white: 0.10), in: RoundedRectangle(cornerRadius: 8))
+            .padding(2)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(
+                Capsule()
+                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
+            )
 
             // Copy button — single tap copies in the selected pill mode.
             // Long-press exposes the granular "select all" alternatives (transcript
@@ -1675,12 +1678,23 @@ struct TranscriptDetailView: View {
                 )
                 .fontWeight(.semibold)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 13)
+                .padding(.vertical, 10)
                 .background(
-                    copied ? Color.green.opacity(0.85) : Color.white,
+                    LinearGradient(
+                        colors: copied
+                            ? [Color.green.opacity(0.95), Color.green.opacity(0.78)]
+                            : [Color.white, Color(white: 0.92)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
                     in: RoundedRectangle(cornerRadius: 12)
                 )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(Color.black.opacity(0.06), lineWidth: 1)
+                )
                 .foregroundStyle(copied ? .white : .black)
+                .shadow(color: .black.opacity(0.25), radius: 6, x: 0, y: 2)
                 .animation(.easeInOut(duration: 0.18), value: copied)
             }
             .contextMenu {
@@ -1739,7 +1753,7 @@ struct TranscriptDetailView: View {
             .accessibilityLabel("Show notes and highlights")
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background(
             LinearGradient(
                 colors: [.black.opacity(0), .black.opacity(0.88)],
@@ -1780,12 +1794,12 @@ struct TranscriptDetailView: View {
         Button(action: action) {
             Text(label)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(active ? .white : Color(white: 0.40))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .foregroundStyle(active ? .white : Color(white: 0.55))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
                 .background(
-                    active ? Color(red: 0.10, green: 0.13, blue: 0.20) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 7)
+                    active ? Color.white.opacity(0.14) : Color.clear,
+                    in: Capsule()
                 )
         }
         .buttonStyle(.plain)
