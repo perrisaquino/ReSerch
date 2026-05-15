@@ -86,7 +86,7 @@ struct SettingsView: View {
                         .foregroundStyle(Color.accentColor)
                     Spacer()
                 }
-            } else {
+            } else if !ExportGate.freeForEveryone {
                 Button {
                     dismiss()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {

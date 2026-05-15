@@ -6,6 +6,12 @@ final class ExportGate {
 
     static let freeExportsPerWindow = 5
 
+    /// Kill switch: when true, the app is fully free — all gating is bypassed and
+    /// upgrade entry points are hidden. Set to false to re-enable the paywall.
+    /// IAPManager, PaywallView, StoreKit products, and restore-purchases remain
+    /// fully intact so existing Pro buyers keep access via `IAPManager.shared.isPro`.
+    static let freeForEveryone = true
+
     private enum Key {
         static let timestamps = "gate.exportTimestamps"
         static let testInDebug = "gate.testInDebug"
@@ -87,6 +93,7 @@ final class ExportGate {
     /// the production-signed binary which has a `receipt`, not `sandboxReceipt`).
     /// DEBUG builds skip unless the test toggle is ON.
     private var isEnforcing: Bool {
+        if Self.freeForEveryone { return false }
         if IAPManager.shared.isPro { return false }
         if Self.isTestFlight { return false }
         #if DEBUG
