@@ -289,6 +289,7 @@
 			packageReferences = (
 				CBAA1111000000000000AAA1 /* XCRemoteSwiftPackageReference "WhisperKit" */,
 				CBAA2222000000000000BBB1 /* XCRemoteSwiftPackageReference "YouTubeKit" */,
+				CBC32E2A2FB738EA0047589E /* XCRemoteSwiftPackageReference "posthog-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = CBCE89EC2F8729DF00569DCD /* Products */;
@@ -802,6 +803,14 @@
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 0.4.0;
+			};
+		};
+		CBC32E2A2FB738EA0047589E /* XCRemoteSwiftPackageReference "posthog-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/PostHog/posthog-ios";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.58.1;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */

@@ -261,6 +261,15 @@ final class TranscriptViewModel {
         result = nil
         status = .fetchingCaptions
 
+        let platform = PlatformRouter.detect(url)
+        let sourceKey = Self.analyticsSource(for: platform)
+        let surface = nextFetchSurface ?? "paste"
+        nextFetchSurface = nil
+        Analytics.shared.track(.transcriptStarted, properties: [
+            "source": sourceKey,
+            "surface": surface
+        ])
+
         currentTask = Task {
             do {
                 DebugLogger.shared.clear()
@@ -268,16 +277,7 @@ final class TranscriptViewModel {
                 func elapsed(since start: Date) -> String { String(format: "%.2fs", Date().timeIntervalSince(start)) }
 
                 rLog(step: "URL", "Input: \(raw)")
-
-                let platform = PlatformRouter.detect(url)
                 rLog(step: "Platform", "Detected: \(platform)")
-                let sourceKey = Self.analyticsSource(for: platform)
-                let surface = nextFetchSurface ?? "paste"
-                nextFetchSurface = nil
-                Analytics.shared.track(.transcriptStarted, properties: [
-                    "source": sourceKey,
-                    "surface": surface
-                ])
 
                 let transcriptResult: TranscriptResult
 
