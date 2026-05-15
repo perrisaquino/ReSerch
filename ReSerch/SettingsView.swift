@@ -30,9 +30,9 @@ struct SettingsView: View {
                 exportSection
                 highlightColorsSection
                 backupSection
-                privacySection
                 feedbackSection
                 resetSection
+                privacySection
 
                 #if DEBUG
                 if debugUnlocked {
