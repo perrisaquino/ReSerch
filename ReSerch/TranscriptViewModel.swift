@@ -19,6 +19,10 @@ final class TranscriptViewModel {
     var batchCurrent: Int = 0
     var isBatchProcessing: Bool = false
 
+    /// Transient analytics surface for the next fetch. Defaults to "paste" if unset.
+    /// ReSerchApp drain sets this to "share_extension" before each share-queue call.
+    var nextFetchSurface: String?
+
     var isLoading: Bool {
         switch status {
         case .fetchingCaptions, .downloadingVideo, .transcribing: return true
@@ -267,6 +271,13 @@ final class TranscriptViewModel {
 
                 let platform = PlatformRouter.detect(url)
                 rLog(step: "Platform", "Detected: \(platform)")
+                let sourceKey = Self.analyticsSource(for: platform)
+                let surface = nextFetchSurface ?? "paste"
+                nextFetchSurface = nil
+                Analytics.shared.track(.transcriptStarted, properties: [
+                    "source": sourceKey,
+                    "surface": surface
+                ])
 
                 let transcriptResult: TranscriptResult
 
@@ -406,6 +417,12 @@ final class TranscriptViewModel {
                 result = transcriptResult
                 status = .done
                 saveToHistory(transcriptResult)
+                Analytics.shared.track(.transcriptCompleted, properties: [
+                    "source": sourceKey,
+                    "surface": surface,
+                    "duration_seconds": Int(Date().timeIntervalSince(t0)),
+                    "word_count": transcriptResult.transcript.split { $0.isWhitespace }.count
+                ])
 
             } catch is CancellationError {
                 rLog(.warn, step: "Task", "Cancelled")
@@ -413,10 +430,27 @@ final class TranscriptViewModel {
             } catch {
                 rLog(.fail, step: "Error", "\(error)")
                 status = .error(error.localizedDescription)
+                Analytics.shared.track(.transcriptFailed, properties: [
+                    "source": sourceKey,
+                    "surface": surface,
+                    "reason": String(describing: type(of: error))
+                ])
             }
         }
 
         await currentTask?.value
+    }
+
+    static func analyticsSource(for platform: Platform) -> String {
+        switch platform {
+        case .youtube, .youtubeShorts: return "youtube"
+        case .tiktok: return "tiktok"
+        case .instagram: return "instagram"
+        case .twitter: return "twitter"
+        case .threads: return "threads"
+        case .localFile: return "local_file"
+        case .unknown: return "unknown"
+        }
     }
 
     /// Transcribes a user-picked local audio or video file. Bypasses URL parsing

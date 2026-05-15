@@ -9,6 +9,7 @@ struct ReSerchApp: App {
 
     init() {
         print("[ReSerch] ReSerchApp.init — binary is live")
+        Analytics.shared.start()
         IAPManager.shared.start()
 
         // One-shot migration from the legacy `pendingShareURLs` flat-array
@@ -90,6 +91,7 @@ struct ReSerchApp: App {
                 guard queue.markProcessing(job.id) else { continue }
 
                 let savedBefore = vm.history.count
+                vm.nextFetchSurface = "share_extension"
                 await vm.fetchTranscript(for: job.url)
                 let didSave = vm.history.count > savedBefore || historyContainsTranscript(for: job.url)
                 if didSave {
@@ -135,6 +137,7 @@ struct ReSerchApp: App {
             return
         }
         Task { @MainActor in
+            vm.nextFetchSurface = "share_extension"
             await vm.fetchTranscript(for: target.absoluteString)
         }
     }
