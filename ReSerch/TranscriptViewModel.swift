@@ -637,17 +637,6 @@ final class TranscriptViewModel {
         updateEntry(updated)
     }
 
-    /// Stamps `lastExportedAt = now` on the entry. Called from any qualifying
-    /// export path: the Main Copy button, the row-level Copy menu, and the
-    /// Share sheet. Long-press copy submenus (Caption Only, Source URL, etc.)
-    /// intentionally do NOT call this. ID-based lookup so a stale snapshot
-    /// from a presented sheet still updates the live record.
-    func markExported(_ entry: TranscriptEntry) {
-        guard let idx = history.firstIndex(where: { $0.id == entry.id }) else { return }
-        history[idx].lastExportedAt = Date()
-        saveHistoryAsync()
-    }
-
     func markdownFor(_ entry: TranscriptEntry) -> String {
         let nb = notebook(for: entry.notebookID)
         return MarkdownFormatter.format(entry.result, notebook: nb, notes: entry.documentNotes, template: ExportTemplatePrefs.shared, capturedAt: entry.date)

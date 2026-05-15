@@ -1514,7 +1514,6 @@ struct TranscriptDetailView: View {
         }
         UIPasteboard.general.string = vm.markdownFor(entry)
         gate.recordExport()
-        vm.markExported(entry)
         flashCopied()
     }
 
@@ -1530,7 +1529,6 @@ struct TranscriptDetailView: View {
             UIPasteboard.general.string = vm.markdownFor(entry)
         }
         gate.recordExport()
-        vm.markExported(entry)
         flashCopied()
     }
 
@@ -1784,7 +1782,6 @@ struct TranscriptDetailView: View {
         }
         guard let root = UIApplication.shared.keyForegroundWindow?.rootViewController else { return }
         root.topmostPresentedViewController.present(av, animated: true)
-        vm.markExported(entry)
     }
 
     private func shortCount(_ n: Int) -> String {
