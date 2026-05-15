@@ -298,18 +298,16 @@ struct SettingsView: View {
     @ViewBuilder
     private var privacySection: some View {
         Section {
-            Toggle(isOn: Binding(
+            Toggle("Share Anonymous Usage", isOn: Binding(
                 get: { !Analytics.shared.isOptedOut },
                 set: { newValue in
                     Analytics.shared.isOptedOut = !newValue
                 }
-            )) {
-                Label("Share anonymous usage", systemImage: "chart.bar.fill")
-            }
+            ))
         } header: {
             Text("Privacy")
         } footer: {
-            Text("Helps me see which features actually get used so I can make ReSerch better. No name, no email, no transcript content — just anonymous taps and screens. Turn it off anytime.")
+            Text("Helps improve ReSerch. No personal information is collected.")
         }
     }
 
