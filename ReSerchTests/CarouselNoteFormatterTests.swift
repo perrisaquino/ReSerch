@@ -22,7 +22,11 @@ final class CarouselNoteFormatterTests: XCTestCase {
             creatorDisplayName: "Alice",
             creatorProfileURL: URL(string: "https://www.instagram.com/alice/")!,
             caption: "hello world",
+            viewCount: nil,
             likeCount: 42,
+            commentCount: nil,
+            shareCount: nil,
+            saveCount: nil,
             postedDate: nil,
             slides: slides
         )

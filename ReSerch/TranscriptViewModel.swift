@@ -237,7 +237,11 @@ final class TranscriptViewModel {
     private var skipNextPreflight = false
 
     func fetchTranscript() async {
-        let raw = urlInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        await fetchTranscript(for: urlInput)
+    }
+
+    func fetchTranscript(for input: String) async {
+        let raw = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty, let url = URL(string: raw) else {
             status = .error("Enter a valid URL")
             return

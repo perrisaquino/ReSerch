@@ -32,13 +32,15 @@
 				The text path is critical for TikTok specifically — TikTok shares
 				the link as plain text rather than as a typed URL attachment.
 			-->
-			<key>NSExtensionActivationRule</key>
-			<dict>
-				<key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
-				<integer>1</integer>
-				<key>NSExtensionActivationSupportsText</key>
-				<true/>
-			</dict>
+				<key>NSExtensionActivationRule</key>
+				<dict>
+					<key>NSExtensionActivationSupportsWebPageWithMaxCount</key>
+					<integer>1</integer>
+					<key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
+					<integer>1</integer>
+					<key>NSExtensionActivationSupportsTextWithMaxCount</key>
+					<integer>1</integer>
+				</dict>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.share-services</string>

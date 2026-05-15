@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 enum ShareState {
     case pending
     case queued
+    case queueFull
     case deeplink
     case failed(String)
 }
@@ -58,6 +59,9 @@ private struct ShareConfirmationView: View {
         case .queued:
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 32))
+        case .queueFull:
+            Image(systemName: "tray.full.fill")
+                .font(.system(size: 32))
         case .deeplink:
             Image(systemName: "arrow.up.forward.app.fill")
                 .font(.system(size: 32))
@@ -69,10 +73,11 @@ private struct ShareConfirmationView: View {
 
     private var iconColor: Color {
         switch model.state {
-        case .pending:  return .white.opacity(0.5)
-        case .queued:   return Color(red: 0.2, green: 0.85, blue: 0.55)
-        case .deeplink: return Color(red: 0.4, green: 0.7, blue: 1.0)
-        case .failed:   return Color(red: 1.0, green: 0.4, blue: 0.4)
+        case .pending:   return .white.opacity(0.5)
+        case .queued:    return Color(red: 0.2, green: 0.85, blue: 0.55)
+        case .queueFull: return Color(red: 1.0, green: 0.75, blue: 0.3)
+        case .deeplink:  return Color(red: 0.4, green: 0.7, blue: 1.0)
+        case .failed:    return Color(red: 1.0, green: 0.4, blue: 0.4)
         }
     }
 
@@ -80,6 +85,7 @@ private struct ShareConfirmationView: View {
         switch model.state {
         case .pending:          return "Saving to ReSerch\u{2026}"
         case .queued:           return "Added to ReSerch"
+        case .queueFull:        return "Queue full. Open ReSerch to clear it."
         case .deeplink:         return "Opening ReSerch\u{2026}"
         case .failed(let msg):  return msg
         }
@@ -143,13 +149,27 @@ final class ShareViewController: UIViewController {
 
         NSLog("[ReSerch Share] Extracted URL: %@", url.absoluteString)
 
-        // Preferred: write to App Group queue, exit silently.
-        if SharedURLQueue.enqueue(url.absoluteString) {
-            NSLog("[ReSerch Share] Enqueued via App Group — will transcribe on next ReSerch foreground")
-            stateModel.state = .queued
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            completeExtension()
-            return
+        // Preferred: write to App Group queue, exit silently. Going through
+        // ShareJobQueue (rather than the SharedURLQueue bool facade) lets us
+        // distinguish a full queue from a missing entitlement so the user
+        // sees a useful message instead of an opaque deeplink fallback.
+        if let queue = ShareJobQueue.shared {
+            switch queue.enqueue(url.absoluteString) {
+            case .added, .duplicate:
+                NSLog("[ReSerch Share] Enqueued via App Group — will transcribe on next ReSerch foreground")
+                stateModel.state = .queued
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                completeExtension()
+                return
+            case .full:
+                NSLog("[ReSerch Share] Queue full (%d) — refusing enqueue", queue.count)
+                stateModel.state = .queueFull
+                try? await Task.sleep(nanoseconds: 2_200_000_000)
+                completeExtension()
+                return
+            case .unavailable:
+                break // fall through to deeplink fallback below
+            }
         }
 
         // App Group unavailable — fall back to deeplink (forces app to foreground).
@@ -175,6 +195,10 @@ final class ShareViewController: UIViewController {
             for provider in item.attachments ?? [] {
                 if let url = await loadURL(from: provider) { return url }
             }
+            if let text = item.attributedTitle?.string,
+               let extracted = firstURL(in: text) {
+                return extracted
+            }
             if let text = item.attributedContentText?.string,
                let extracted = firstURL(in: text) {
                 return extracted
@@ -185,12 +209,30 @@ final class ShareViewController: UIViewController {
 
     private func loadURL(from provider: NSItemProvider) async -> URL? {
         if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
-            return await loadTypedItem(from: provider, type: UTType.url.identifier) as? URL
+            if let url = url(from: await loadTypedItem(from: provider, type: UTType.url.identifier)) {
+                return url
+            }
         }
-        if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier),
-           let text = await loadTypedItem(from: provider, type: UTType.plainText.identifier) as? String,
-           let extracted = firstURL(in: text) {
-            return extracted
+        let textTypes = [
+            UTType.plainText.identifier,
+            UTType.text.identifier,
+            "public.utf8-plain-text",
+            "public.url-name"
+        ]
+        for type in textTypes where provider.hasItemConformingToTypeIdentifier(type) {
+            if let text = text(from: await loadTypedItem(from: provider, type: type)),
+               let extracted = firstURL(in: text) {
+                return extracted
+            }
+        }
+        for type in provider.registeredTypeIdentifiers {
+            if let url = url(from: await loadTypedItem(from: provider, type: type)) {
+                return url
+            }
+            if let text = text(from: await loadTypedItem(from: provider, type: type)),
+               let extracted = firstURL(in: text) {
+                return extracted
+            }
         }
         return nil
     }
@@ -201,6 +243,27 @@ final class ShareViewController: UIViewController {
                 cont.resume(returning: value)
             }
         }
+    }
+
+    private func url(from value: Any?) -> URL? {
+        if let url = value as? URL { return url }
+        if let url = value as? NSURL { return url as URL }
+        if let string = value as? String { return URL(string: string.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        if let string = value as? NSString { return URL(string: (string as String).trimmingCharacters(in: .whitespacesAndNewlines)) }
+        return nil
+    }
+
+    private func text(from value: Any?) -> String? {
+        if let string = value as? String { return string }
+        if let string = value as? NSString { return string as String }
+        if let attributed = value as? NSAttributedString { return attributed.string }
+        if let data = value as? Data { return String(data: data, encoding: .utf8) }
+        if let url = value as? URL { return url.absoluteString }
+        if let url = value as? NSURL { return (url as URL).absoluteString }
+        if let dict = value as? [String: Any] {
+            return dict.values.compactMap { text(from: $0) }.joined(separator: "\n")
+        }
+        return nil
     }
 
     private func firstURL(in text: String) -> URL? {

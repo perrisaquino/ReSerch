@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var showOnboarding = !OnboardingView.hasCompleted
     @State private var searchQuery: String = ""
     @State private var searchIsPresented: Bool = false
+    @FocusState private var searchFieldFocused: Bool
 
     var body: some View {
         NavigationStack {
@@ -26,11 +27,6 @@ struct ContentView: View {
             .navigationTitle("Transcripts")
             .navigationBarTitleDisplayMode(.large)
             .toolbar { toolbarContent }
-            .searchable(
-                text: $searchQuery,
-                isPresented: $searchIsPresented,
-                prompt: "Search"
-            )
             .safeAreaInset(edge: .bottom) {
                 if selectionMode && !selectedIDs.isEmpty { bulkBar }
             }
@@ -106,7 +102,10 @@ struct ContentView: View {
         ToolbarItem(placement: .topBarTrailing) {
             HStack(spacing: 14) {
                 Button {
-                    searchIsPresented = true
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        searchIsPresented = true
+                    }
+                    searchFieldFocused = true
                 } label: {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
@@ -210,44 +209,88 @@ struct ContentView: View {
     // MARK: - Feed
 
     private var feedView: some View {
-        Group {
-            if vm.history.isEmpty {
-                emptyState
-            } else if filteredHistory.isEmpty {
-                noSearchResults
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(filteredHistory) { entry in
-                            TranscriptRow(
-                                entry: entry,
-                                isSelected: selectedIDs.contains(entry.id),
-                                selectionMode: selectionMode,
-                                notebook: vm.notebook(for: entry.notebookID),
-                                onTap: {
-                                    if selectionMode {
-                                        if selectedIDs.contains(entry.id) {
-                                            selectedIDs.remove(entry.id)
+        VStack(spacing: 0) {
+            if searchIsPresented {
+                searchBar
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            Group {
+                if vm.history.isEmpty {
+                    emptyState
+                } else if filteredHistory.isEmpty {
+                    noSearchResults
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(filteredHistory) { entry in
+                                TranscriptRow(
+                                    entry: entry,
+                                    isSelected: selectedIDs.contains(entry.id),
+                                    selectionMode: selectionMode,
+                                    notebook: vm.notebook(for: entry.notebookID),
+                                    onTap: {
+                                        if selectionMode {
+                                            if selectedIDs.contains(entry.id) {
+                                                selectedIDs.remove(entry.id)
+                                            } else {
+                                                selectedIDs.insert(entry.id)
+                                            }
                                         } else {
-                                            selectedIDs.insert(entry.id)
+                                            selectedEntry = entry
                                         }
-                                    } else {
-                                        selectedEntry = entry
-                                    }
-                                },
-                                onCopy: { copyMarkdown(for: entry) },
-                                onDelete: { vm.deleteEntry(entry) },
-                                onRename: { vm.renameEntry(entry, to: $0) },
-                                onMoveToNotebook: { singleMoveEntry = entry }
-                            )
-                            Divider()
-                                .background(Color.white.opacity(0.08))
+                                    },
+                                    onCopy: { copyMarkdown(for: entry) },
+                                    onDelete: { vm.deleteEntry(entry) },
+                                    onRename: { vm.renameEntry(entry, to: $0) },
+                                    onMoveToNotebook: { singleMoveEntry = entry }
+                                )
+                                Divider()
+                                    .background(Color.white.opacity(0.08))
+                            }
                         }
                     }
                 }
             }
         }
         .background(Color(red: 0.07, green: 0.09, blue: 0.13))
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Search", text: $searchQuery)
+                .focused($searchFieldFocused)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .foregroundStyle(.primary)
+                .submitLabel(.search)
+            if !searchQuery.isEmpty {
+                Button {
+                    searchQuery = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            Button("Cancel") {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    searchQuery = ""
+                    searchIsPresented = false
+                }
+                searchFieldFocused = false
+            }
+            .foregroundStyle(Color.accentColor)
+        }
+        .font(.body)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(red: 0.09, green: 0.11, blue: 0.15))
+        .overlay(alignment: .bottom) {
+            Divider().background(Color.white.opacity(0.08))
+        }
     }
 
     /// History filtered by the current search query. Matches case-insensitively
