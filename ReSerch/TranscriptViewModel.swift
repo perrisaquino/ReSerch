@@ -758,6 +758,11 @@ final class TranscriptViewModel {
         notebooks.append(nb)
         sortNotebooks()
         saveNotebooksAsync()
+        Analytics.shared.track(.notebookCreated, properties: [
+            "has_description": !((trimmedDesc?.isEmpty) ?? true),
+            "has_color": colorHex != nil,
+            "total_count": notebooks.count
+        ])
         return nb
     }
 
@@ -820,15 +825,26 @@ final class TranscriptViewModel {
         let note = DocumentNote(text: text, isPinned: false)
         history[idx].documentNotes.append(note)
         saveHistoryAsync()
+        Analytics.shared.track(.documentNoteAdded, properties: [
+            "note_count": history[idx].documentNotes.count
+        ])
         return note.id
     }
 
     func updateDocumentNote(_ entry: TranscriptEntry, noteID: UUID, text: String) {
         guard let entryIdx = history.firstIndex(where: { $0.id == entry.id }) else { return }
         guard let noteIdx = history[entryIdx].documentNotes.firstIndex(where: { $0.id == noteID }) else { return }
+        let oldLen = history[entryIdx].documentNotes[noteIdx].text.count
         history[entryIdx].documentNotes[noteIdx].text = text
         history[entryIdx].documentNotes[noteIdx].updatedAt = Date()
         saveHistoryAsync()
+        // Only fire on non-empty meaningful edits — the picker fires this constantly during typing,
+        // but we just want to know the user actually wrote something.
+        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && text.count != oldLen {
+            Analytics.shared.track(.documentNoteEdited, properties: [
+                "char_count": text.count
+            ])
+        }
     }
 
     func removeDocumentNote(_ entry: TranscriptEntry, noteID: UUID) {
@@ -846,6 +862,7 @@ final class TranscriptViewModel {
             history[entryIdx].documentNotes[i].isPinned = (history[entryIdx].documentNotes[i].id == noteID)
         }
         saveHistoryAsync()
+        Analytics.shared.track(.documentNotePinned, properties: ["pinned": true])
     }
 
     func unpinDocumentNote(_ entry: TranscriptEntry, noteID: UUID) {
@@ -853,6 +870,7 @@ final class TranscriptViewModel {
         guard let noteIdx = history[entryIdx].documentNotes.firstIndex(where: { $0.id == noteID }) else { return }
         history[entryIdx].documentNotes[noteIdx].isPinned = false
         saveHistoryAsync()
+        Analytics.shared.track(.documentNotePinned, properties: ["pinned": false])
     }
 
     /// Alphabetical, case-insensitive. Stable ordering for the Notebooks tab list.

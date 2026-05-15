@@ -160,6 +160,11 @@ struct ContentView: View {
                         .joined(separator: "\n\n---\n\n")
                     UIPasteboard.general.string = markdown
                     gate.recordExport()
+                    Analytics.shared.track(.transcriptExported, properties: [
+                        "format": "markdown",
+                        "surface": "feed_bulk",
+                        "count": selectedIDs.count
+                    ])
                     selectionMode = false
                     selectedIDs.removeAll()
                 } label: {
@@ -416,6 +421,10 @@ struct ContentView: View {
         }
         UIPasteboard.general.string = vm.markdownFor(entry)
         gate.recordExport()
+        Analytics.shared.track(.transcriptExported, properties: [
+            "format": "markdown",
+            "surface": "feed_row"
+        ])
     }
 
 }

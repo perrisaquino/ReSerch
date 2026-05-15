@@ -111,9 +111,18 @@ struct TranscriptDetailView: View {
                 .toolbar { toolbarContent }
                 .safeAreaInset(edge: .bottom) { if !isEditing { bottomBar } }
                 .preferredColorScheme(.dark)
+                .onAppear {
+                    Analytics.shared.track(.transcriptViewed, properties: [
+                        "is_carousel": isCarouselTranscript,
+                        "in_notebook": entry.notebookID != nil,
+                        "annotation_count": entry.result.annotations.count,
+                        "doc_note_count": entry.documentNotes.count
+                    ])
+                }
                 .fullScreenCover(isPresented: $showPaywall) { PaywallView() }
                 .sheet(isPresented: $showNoteInput) {
                     NoteInputSheet(highlightedText: pendingHighlightText ?? "", initialComment: pendingExistingComment) { comment in
+                        let isEdit = pendingExistingAnnotationId != nil
                         if let existingId = pendingExistingAnnotationId,
                            let idx = entry.result.annotations.firstIndex(where: { $0.id == existingId }) {
                             // Edit-in-place: update existing annotation's comment.
@@ -136,6 +145,11 @@ struct TranscriptDetailView: View {
                         pendingExistingAnnotationId = nil
                         pendingExistingComment = ""
                         vm.updateEntry(entry)
+                        Analytics.shared.track(.annotationCreated, properties: [
+                            "kind": "comment",
+                            "has_comment": !comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                            "is_edit": isEdit
+                        ])
                     }
                 }
                 .sheet(isPresented: $showEditorComment) {
@@ -629,6 +643,11 @@ struct TranscriptDetailView: View {
                             Annotation(text: text, offset: offset, slideIndex: slideIndex)
                         )
                         vm.updateEntry(entry)
+                        Analytics.shared.track(.annotationCreated, properties: [
+                            "kind": "highlight",
+                            "has_comment": false,
+                            "in_carousel": true
+                        ])
                         if entry.result.annotations.count == 1 {
                             ReviewPromptManager.shared.recordMilestone(.firstAnnotation)
                         }
@@ -649,6 +668,11 @@ struct TranscriptDetailView: View {
                             Annotation(text: text, offset: offset, slideIndex: nil)
                         )
                         vm.updateEntry(entry)
+                        Analytics.shared.track(.annotationCreated, properties: [
+                            "kind": "highlight",
+                            "has_comment": false,
+                            "in_carousel": false
+                        ])
                         if entry.result.annotations.count == 1 {
                             ReviewPromptManager.shared.recordMilestone(.firstAnnotation)
                         }
@@ -1429,6 +1453,7 @@ struct TranscriptDetailView: View {
     private func enterEditMode() {
         editingText = entry.result.transcript
         isEditing = true
+        Analytics.shared.track(.transcriptEditStarted)
     }
 
     /// Heuristic for "would this note get truncated at lineLimit(3)?" — drives
@@ -1515,6 +1540,10 @@ struct TranscriptDetailView: View {
         UIPasteboard.general.string = vm.markdownFor(entry)
         gate.recordExport()
         flashCopied()
+        Analytics.shared.track(.transcriptExported, properties: [
+            "format": "markdown",
+            "surface": "detail_main"
+        ])
     }
 
     private func copyAsRichText() {
@@ -1530,6 +1559,10 @@ struct TranscriptDetailView: View {
         }
         gate.recordExport()
         flashCopied()
+        Analytics.shared.track(.transcriptExported, properties: [
+            "format": "rich_text",
+            "surface": "detail_main"
+        ])
     }
 
     private func copyTranscriptTextOnly() {
@@ -1537,11 +1570,13 @@ struct TranscriptDetailView: View {
         // Equivalent to "select all + copy" of the transcript section.
         UIPasteboard.general.string = entry.result.transcript
         flashCopied()
+        Analytics.shared.track(.transcriptCopiedPartial, properties: ["kind": "transcript_text"])
     }
 
     private func copyCaptionOnly() {
         UIPasteboard.general.string = entry.result.caption
         flashCopied()
+        Analytics.shared.track(.transcriptCopiedPartial, properties: ["kind": "caption"])
     }
 
     private func copyAllNotes() {
@@ -1573,6 +1608,9 @@ struct TranscriptDetailView: View {
     /// per-slide field, so without this propagation the user's edits would silently
     /// vanish from the main view despite being saved to disk.
     private func saveEditedTranscript() {
+        let boldCount = editingText.components(separatedBy: "**").count / 2
+        let highlightCount = editingText.components(separatedBy: "==").count / 2
+
         entry.result.transcript = editingText
 
         if isCarouselTranscript, let slides = entry.result.carouselSlides {
@@ -1587,6 +1625,11 @@ struct TranscriptDetailView: View {
         }
 
         vm.updateEntry(entry)
+        Analytics.shared.track(.transcriptEditSaved, properties: [
+            "bold_count": boldCount,
+            "highlight_count": highlightCount,
+            "char_count": editingText.count
+        ])
     }
 
     /// Parses an edited carousel-transcript markdown blob back into a [slideIndex: text]
@@ -1730,6 +1773,10 @@ struct TranscriptDetailView: View {
                     }
                     presentShareSheet()
                     gate.recordExport()
+                    Analytics.shared.track(.transcriptExported, properties: [
+                        "format": "share_sheet",
+                        "surface": "detail_long_press"
+                    ])
                 } label: {
                     Label("Share…", systemImage: "square.and.arrow.up")
                 }

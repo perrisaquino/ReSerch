@@ -119,6 +119,7 @@ struct AnnotationsPanel: View {
                         if let origId = ann.inAppId {
                             Button(role: .destructive) {
                                 annotations.removeAll { $0.id == origId }
+                                Analytics.shared.track(.annotationDeleted)
                             } label: {
                                 Label("Delete", systemImage: "trash")
                             }
