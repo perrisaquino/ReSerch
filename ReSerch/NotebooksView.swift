@@ -8,6 +8,7 @@ struct NotebooksView: View {
     @State private var renameTarget: Notebook? = nil
     @State private var deleteTarget: Notebook? = nil
     @State private var renameText: String = ""
+    @State private var draggingID: UUID? = nil
 
     var body: some View {
         NavigationStack {
@@ -22,6 +23,24 @@ struct NotebooksView: View {
             .navigationTitle("Notebooks")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Button {
+                            vm.notebooksSortMode = .recent
+                        } label: {
+                            Label("Sort by Recently Edited", systemImage: vm.notebooksSortMode == .recent ? "checkmark" : "")
+                        }
+                        Button {
+                            vm.notebooksSortMode = .manual
+                        } label: {
+                            Label("Custom Order", systemImage: vm.notebooksSortMode == .manual ? "checkmark" : "")
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.headline)
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showCreate = true
@@ -84,6 +103,28 @@ struct NotebooksView: View {
                         notebookRow(notebook)
                     }
                     .buttonStyle(.plain)
+                    .scaleEffect(draggingID == notebook.id ? 0.97 : 1.0)
+                    .shadow(color: .black.opacity(draggingID == notebook.id ? 0.35 : 0), radius: 8)
+                    .animation(.easeOut(duration: 0.15), value: draggingID)
+                    .draggable(notebook.id.uuidString) {
+                        // Lift preview: a faded mini version of the row.
+                        notebookRow(notebook)
+                            .opacity(0.85)
+                            .frame(maxWidth: 320)
+                    }
+                    .dropDestination(for: String.self) { droppedIDs, _ in
+                        guard let raw = droppedIDs.first,
+                              let movedID = UUID(uuidString: raw),
+                              movedID != notebook.id else {
+                            draggingID = nil
+                            return false
+                        }
+                        vm.reorderNotebook(movedID, before: notebook.id)
+                        draggingID = nil
+                        return true
+                    } isTargeted: { isOver in
+                        if isOver { draggingID = notebook.id }
+                    }
                     .contextMenu {
                         Button {
                             renameText = notebook.name

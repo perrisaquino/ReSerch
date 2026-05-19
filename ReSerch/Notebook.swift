@@ -10,29 +10,41 @@ struct Notebook: Identifiable, Hashable, Codable {
     var name: String
     var colorHex: String?
     let createdAt: Date
+    /// Bumped whenever a transcript is assigned to or removed from this notebook.
+    /// Drives the "Recently Edited" sort in the Notebooks tab and the Move-to-Notebook sheet.
+    var updatedAt: Date
+    /// User-defined position when the Notebooks tab is in Custom Order mode.
+    /// nil for notebooks that predate manual sorting; initialized lazily on first switch.
+    var manualOrder: Int?
     /// Optional context note describing the notebook's purpose.
     /// Surfaces as a subtitle in NotebookDetailView and in combined-markdown exports.
     var notebookDescription: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, colorHex, createdAt, notebookDescription
+        case id, name, colorHex, createdAt, updatedAt, manualOrder, notebookDescription
     }
 
     init(name: String, colorHex: String? = nil, notebookDescription: String? = nil) {
+        let now = Date()
         self.id = UUID()
         self.name = name
         self.colorHex = colorHex
-        self.createdAt = Date()
+        self.createdAt = now
+        self.updatedAt = now
+        self.manualOrder = nil
         self.notebookDescription = notebookDescription
     }
 
-    // Custom decode so notebooks saved before this field existed still load.
+    // Custom decode so notebooks saved before these fields existed still load.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         colorHex = try c.decodeIfPresent(String.self, forKey: .colorHex)
-        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        let created = try c.decode(Date.self, forKey: .createdAt)
+        createdAt = created
+        updatedAt = (try c.decodeIfPresent(Date.self, forKey: .updatedAt)) ?? created
+        manualOrder = try c.decodeIfPresent(Int.self, forKey: .manualOrder)
         notebookDescription = try c.decodeIfPresent(String.self, forKey: .notebookDescription)
     }
 

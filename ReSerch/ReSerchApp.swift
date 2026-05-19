@@ -42,6 +42,7 @@ struct ReSerchApp: App {
                 .onAppear {
                     print("[ReSerch] RootTabView.onAppear")
                     NotificationManager.requestPermission()
+                    vm.refreshPendingShareJobs()
                 }
                 // Custom-scheme handoff from ReSerchShareExtension. The extension fires
                 // `reserch://transcribe?url=...` and the system relaunches us here.
@@ -50,10 +51,14 @@ struct ReSerchApp: App {
                 .onOpenURL { url in
                     handleIncomingURL(url)
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .shareQueueRetryRequested)) { _ in
+                    drainSharedQueueIfNeeded()
+                }
         }
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
+                vm.refreshPendingShareJobs()
                 drainSharedQueueIfNeeded()
             case .background, .inactive:
                 vm.saveHistory()
@@ -78,21 +83,34 @@ struct ReSerchApp: App {
         guard let queue = ShareJobQueue.shared else { return }
         guard shareQueueDrainTask == nil else { return }
         queue.requeueRetryableFailedJobs()
-        guard queue.nextQueued() != nil else { return }
+        vm.refreshPendingShareJobs()
+        guard queue.nextQueued() != nil else {
+            // Even with no queued work, failed-at-max-retry jobs need to stay visible.
+            vm.refreshPendingShareJobs()
+            return
+        }
         print("[ReSerch] Processing share queue — \(queue.count) job(s) total")
 
         shareQueueDrainTask = Task { @MainActor in
-            defer { shareQueueDrainTask = nil }
+            defer {
+                shareQueueDrainTask = nil
+                vm.activeShareJobID = nil
+                vm.refreshPendingShareJobs()
+            }
             while let job = queue.nextQueued() {
                 if historyContainsTranscript(for: job.url) {
                     queue.markCompleted(job.id)
+                    vm.refreshPendingShareJobs()
                     continue
                 }
                 guard queue.markProcessing(job.id) else { continue }
+                vm.refreshPendingShareJobs()
 
                 let savedBefore = vm.history.count
                 vm.nextFetchSurface = "share_extension"
+                vm.activeShareJobID = job.id
                 await vm.fetchTranscript(for: job.url)
+                vm.activeShareJobID = nil
                 let didSave = vm.history.count > savedBefore || historyContainsTranscript(for: job.url)
                 if didSave {
                     queue.markCompleted(job.id)
@@ -101,6 +119,7 @@ struct ReSerchApp: App {
                     // error text without reaching into TranscriptViewModel's internals.
                     queue.markFailed(job.id, error: "\(vm.status)")
                 }
+                vm.refreshPendingShareJobs()
                 // Mirror fetchBatch's inter-iteration breather — gives platform-side
                 // rate-limit / cookie state a moment to settle.
                 try? await Task.sleep(for: .seconds(1))
