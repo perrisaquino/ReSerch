@@ -23,6 +23,17 @@ final class TranscriptViewModel {
     /// ReSerchApp drain sets this to "share_extension" before each share-queue call.
     var nextFetchSurface: String?
 
+    /// Snapshot of in-flight share-extension jobs (queued + processing + failed).
+    /// Refreshed by `ReSerchApp` around every queue mutation; renders as ghost rows
+    /// at the top of the feed so users can see share-sheet ingests in progress.
+    var pendingShareJobs: [ShareJob] = []
+
+    /// The share-extension job currently being fetched, if any. Set immediately
+    /// before the per-job `fetchTranscript` call in the drain loop and cleared
+    /// immediately after. Ghost rows use this to know which one should mirror
+    /// the live `status` value (progress %) vs show a static state label.
+    var activeShareJobID: UUID?
+
     var isLoading: Bool {
         switch status {
         case .fetchingCaptions, .downloadingVideo, .transcribing: return true
@@ -242,6 +253,18 @@ final class TranscriptViewModel {
 
     func fetchTranscript() async {
         await fetchTranscript(for: urlInput)
+    }
+
+    /// Pulls the current durable share-queue state into `pendingShareJobs`.
+    /// Filters out `processing` jobs when no `activeShareJobID` is set — that
+    /// state is stale until cold-start reset runs. Called by `ReSerchApp`
+    /// around every queue mutation so failed-at-max-retry jobs stay visible.
+    func refreshPendingShareJobs() {
+        guard let queue = ShareJobQueue.shared else {
+            pendingShareJobs = []
+            return
+        }
+        pendingShareJobs = queue.allJobs()
     }
 
     func fetchTranscript(for input: String) async {
@@ -799,20 +822,40 @@ final class TranscriptViewModel {
     }
 
     /// Moves a transcript into a notebook (or to Unfiled when notebook is nil).
+    /// Bumps `updatedAt` on both the source notebook (if any) and the destination
+    /// so the "Recently Edited" sort reflects attach/detach actions.
     func assignNotebook(_ entry: TranscriptEntry, to notebook: Notebook?) {
         guard let idx = history.firstIndex(where: { $0.id == entry.id }) else { return }
+        let oldNotebookID = history[idx].notebookID
         history[idx].notebookID = notebook?.id
         saveHistoryAsync()
+        var touched = Set<UUID>()
+        if let oldID = oldNotebookID { touched.insert(oldID) }
+        if let newID = notebook?.id { touched.insert(newID) }
+        for id in touched { touchNotebook(id) }
+        if !touched.isEmpty { saveNotebooksAsync() }
     }
 
     /// Bulk-move version. Used by the multi-select bulkBar.
     func assignNotebook(_ entries: [TranscriptEntry], to notebook: Notebook?) {
+        var touched = Set<UUID>()
         for entry in entries {
             if let idx = history.firstIndex(where: { $0.id == entry.id }) {
+                if let oldID = history[idx].notebookID { touched.insert(oldID) }
                 history[idx].notebookID = notebook?.id
             }
         }
+        if let newID = notebook?.id { touched.insert(newID) }
         saveHistoryAsync()
+        for id in touched { touchNotebook(id) }
+        if !touched.isEmpty { saveNotebooksAsync() }
+    }
+
+    /// Bumps `updatedAt` on a notebook. Caller is responsible for persistence —
+    /// callers that touch in a loop should save once at the end.
+    private func touchNotebook(_ id: UUID) {
+        guard let idx = notebooks.firstIndex(where: { $0.id == id }) else { return }
+        notebooks[idx].updatedAt = Date()
     }
 
     // MARK: - Document Notes (mini journal)
@@ -873,9 +916,102 @@ final class TranscriptViewModel {
         Analytics.shared.track(.documentNotePinned, properties: ["pinned": false])
     }
 
-    /// Alphabetical, case-insensitive. Stable ordering for the Notebooks tab list.
+    /// Sort key for the Notebooks tab. Persisted across launches.
+    enum NotebooksSortMode: String {
+        case recent
+        case manual
+    }
+
+    private static let sortModeKey = "notebooks.sortMode"
+
+    /// Observable so the tab's Menu re-renders when the user flips modes.
+    /// Setting it persists to UserDefaults and re-sorts in place.
+    var notebooksSortMode: NotebooksSortMode = {
+        let raw = UserDefaults.standard.string(forKey: TranscriptViewModel.sortModeKey)
+            ?? NotebooksSortMode.recent.rawValue
+        return NotebooksSortMode(rawValue: raw) ?? .recent
+    }() {
+        didSet {
+            UserDefaults.standard.set(notebooksSortMode.rawValue, forKey: Self.sortModeKey)
+            if notebooksSortMode == .manual {
+                initializeManualOrderIfNeeded()
+            }
+            sortNotebooks()
+        }
+    }
+
+    /// Branches on `notebooksSortMode`. Both branches use stable tiebreakers so
+    /// notebooks with clustered timestamps don't reshuffle on every save.
     private func sortNotebooks() {
-        notebooks.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        switch notebooksSortMode {
+        case .recent:
+            notebooks.sort { a, b in
+                if a.updatedAt != b.updatedAt { return a.updatedAt > b.updatedAt }
+                if a.createdAt != b.createdAt { return a.createdAt > b.createdAt }
+                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            }
+        case .manual:
+            notebooks.sort { a, b in
+                switch (a.manualOrder, b.manualOrder) {
+                case let (l?, r?):
+                    if l != r { return l < r }
+                case (.some, .none): return true
+                case (.none, .some): return false
+                case (.none, .none): break
+                }
+                if a.createdAt != b.createdAt { return a.createdAt > b.createdAt }
+                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            }
+        }
+    }
+
+    /// When the user first switches to Custom Order, seed every notebook's
+    /// `manualOrder` from the currently visible (recent-sorted) array so the
+    /// initial Custom view matches what they were looking at.
+    private func initializeManualOrderIfNeeded() {
+        guard notebooks.contains(where: { $0.manualOrder == nil }) else { return }
+        // Snapshot the current display order under `.recent` rules before mutating.
+        let recentOrdered: [UUID] = notebooks.sorted { a, b in
+            if a.updatedAt != b.updatedAt { return a.updatedAt > b.updatedAt }
+            if a.createdAt != b.createdAt { return a.createdAt > b.createdAt }
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }.map(\.id)
+        for (position, id) in recentOrdered.enumerated() {
+            if let idx = notebooks.firstIndex(where: { $0.id == id }) {
+                notebooks[idx].manualOrder = position
+            }
+        }
+        saveNotebooksAsync()
+    }
+
+    /// Drag-and-drop reorder. `movedID` lands directly before `targetID` in the
+    /// visible array. Switches mode to `.manual` if currently `.recent`, then
+    /// rewrites every `manualOrder` to its new index and persists.
+    func reorderNotebook(_ movedID: UUID, before targetID: UUID) {
+        guard movedID != targetID else { return }
+        if notebooksSortMode == .recent {
+            // Seeds manualOrder from the currently displayed (recent) order,
+            // then flips mode without re-sorting.
+            initializeManualOrderIfNeeded()
+            UserDefaults.standard.set(NotebooksSortMode.manual.rawValue, forKey: Self.sortModeKey)
+            // Bypass didSet to avoid double work — we're about to rewrite the order.
+            // Direct property write still triggers @Observable observers.
+            notebooksSortMode = .manual
+        }
+        // Work on the currently sorted display array (notebooks is already sorted).
+        var display = notebooks
+        guard let fromIdx = display.firstIndex(where: { $0.id == movedID }),
+              let toIdx = display.firstIndex(where: { $0.id == targetID }) else { return }
+        let moved = display.remove(at: fromIdx)
+        let insertIdx = display.firstIndex(where: { $0.id == targetID }) ?? toIdx
+        display.insert(moved, at: insertIdx)
+        for (position, nb) in display.enumerated() {
+            if let idx = notebooks.firstIndex(where: { $0.id == nb.id }) {
+                notebooks[idx].manualOrder = position
+            }
+        }
+        sortNotebooks()
+        saveNotebooksAsync()
     }
 
     // MARK: - Notebook persistence

@@ -37,6 +37,16 @@ struct MoveToNotebookSheet: View {
         return n == 1 ? "1 transcript" : "\(n) transcripts"
     }
 
+    /// Most-recently-touched notebook first (touched on transcript assign/remove).
+    /// Stable tiebreakers so notebooks with identical timestamps don't shuffle.
+    private var sortedNotebooks: [Notebook] {
+        vm.notebooks.sorted { a, b in
+            if a.updatedAt != b.updatedAt { return a.updatedAt > b.updatedAt }
+            if a.createdAt != b.createdAt { return a.createdAt > b.createdAt }
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -48,7 +58,7 @@ struct MoveToNotebookSheet: View {
                     newNotebookRow
 
                     if !vm.notebooks.isEmpty {
-                        ForEach(vm.notebooks) { notebook in
+                        ForEach(sortedNotebooks) { notebook in
                             Button {
                                 move(to: notebook)
                             } label: {

@@ -223,6 +223,21 @@ final class ShareJobQueue {
         return mutation.persisted ? mutation.result : 0
     }
 
+    /// Flip a single failed job back to queued, ignoring retry caps. Used by
+    /// the in-feed retry chip — user-initiated retries shouldn't share the
+    /// auto-retry budget consumed by `requeueRetryableFailedJobs`.
+    @discardableResult
+    func requeueFailedJob(_ id: UUID) -> Bool {
+        let mutation = mutate(fallback: false) { jobs in
+            guard let idx = jobs.firstIndex(where: { $0.id == id }) else { return (false, false) }
+            guard jobs[idx].state == .failed else { return (false, false) }
+            jobs[idx].state = .queued
+            jobs[idx].updatedAt = Date()
+            return (true, true)
+        }
+        return mutation.persisted && mutation.result
+    }
+
     /// Move failed jobs back into the drain path for a bounded number of
     /// foreground retries. This keeps transient network/cookie failures from
     /// becoming invisible permanent backlog while still stopping retry loops.
@@ -391,4 +406,11 @@ enum SharedURLQueue {
     static var pendingCount: Int {
         ShareJobQueue.shared?.count ?? 0
     }
+}
+
+extension Notification.Name {
+    /// Posted by the in-feed retry chip after `requeueFailedJob(_:)` flips a
+    /// job back to queued. `ReSerchApp` listens and runs `drainSharedQueueIfNeeded`
+    /// immediately, so retry doesn't wait for the next foreground bounce.
+    static let shareQueueRetryRequested = Notification.Name("ShareQueueRetryRequested")
 }

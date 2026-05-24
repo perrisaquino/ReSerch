@@ -221,13 +221,28 @@ struct ContentView: View {
             }
 
             Group {
-                if vm.history.isEmpty {
+                if vm.history.isEmpty && vm.pendingShareJobs.isEmpty {
                     emptyState
-                } else if filteredHistory.isEmpty {
+                } else if filteredHistory.isEmpty && vm.pendingShareJobs.isEmpty {
                     noSearchResults
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 0) {
+                            // Ghost rows for share-extension jobs in flight.
+                            // Rendered regardless of search filter — they're
+                            // transient and the user wants visibility.
+                            ForEach(vm.pendingShareJobs, id: \.id) { job in
+                                PendingTranscriptRow(
+                                    job: job,
+                                    isActive: vm.activeShareJobID == job.id,
+                                    liveStatus: vm.status,
+                                    onRetry: { retryShareJob(job) }
+                                )
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                                Divider()
+                                    .background(Color.white.opacity(0.08))
+                            }
+
                             ForEach(filteredHistory) { entry in
                                 TranscriptRow(
                                     entry: entry,
@@ -254,6 +269,7 @@ struct ContentView: View {
                                     .background(Color.white.opacity(0.08))
                             }
                         }
+                        .animation(.default, value: vm.pendingShareJobs.map(\.id))
                     }
                 }
             }
@@ -425,6 +441,16 @@ struct ContentView: View {
             "format": "markdown",
             "surface": "feed_row"
         ])
+    }
+
+    /// User tapped the retry chip on a failed ghost row. Flip the job back to
+    /// queued and post a notification so `ReSerchApp` kicks off the drain
+    /// without waiting for the next foreground bounce.
+    private func retryShareJob(_ job: ShareJob) {
+        guard let queue = ShareJobQueue.shared else { return }
+        guard queue.requeueFailedJob(job.id) else { return }
+        vm.refreshPendingShareJobs()
+        NotificationCenter.default.post(name: .shareQueueRetryRequested, object: nil)
     }
 
 }
@@ -659,5 +685,118 @@ struct TranscriptRow: View {
 
     private func vm_markdown() -> String {
         MarkdownFormatter.format(entry.result)
+    }
+}
+
+// MARK: - Pending Row (share-extension ghost)
+
+/// Lightweight row representing a share-extension job that hasn't finished
+/// fetching/transcribing yet. Visually mirrors `TranscriptRow`'s outer frame
+/// so the real row slots into the same position when the job completes.
+private struct PendingTranscriptRow: View {
+    let job: ShareJob
+    let isActive: Bool
+    let liveStatus: TranscriptViewModel.FetchStatus
+    let onRetry: () -> Void
+
+    /// Matches the cyan used in AddTranscriptView for the transcribing phase.
+    private static let liveColor = Color(red: 0.3, green: 0.8, blue: 0.75)
+
+    var body: some View {
+        HStack(spacing: 12) {
+            statusIcon
+                .frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(displayHost)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Text(statusLabel)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color(white: 0.65))
+                    .lineLimit(1)
+                if let progress = progressValue {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                        .tint(Self.liveColor)
+                        .frame(maxWidth: .infinity)
+                } else if job.state != .failed {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                        .tint(Self.liveColor)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            if job.state == .failed {
+                Button(action: onRetry) {
+                    Text("Retry")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.red.opacity(0.85), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.white.opacity(0.02))
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        switch job.state {
+        case .failed:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 18))
+                .foregroundStyle(.red)
+        case .processing, .queued:
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: 18))
+                .foregroundStyle(Self.liveColor)
+        }
+    }
+
+    private var displayHost: String {
+        if let host = URL(string: job.url)?.host {
+            return host.replacingOccurrences(of: "www.", with: "")
+        }
+        return job.url
+    }
+
+    /// Pulls live status text/progress only for the actively-fetching job;
+    /// other ghost rows show their static `ShareJob.state` label.
+    private var statusLabel: String {
+        if job.state == .failed {
+            return job.lastError.map { "Failed — \($0)" } ?? "Failed"
+        }
+        if isActive {
+            switch liveStatus {
+            case .fetchingCaptions:
+                return "Fetching captions…"
+            case .downloadingVideo(let p):
+                return "Downloading \(Int(p * 100))%"
+            case .transcribing(let p):
+                return "Transcribing \(Int(p * 100))%"
+            default:
+                break
+            }
+        }
+        switch job.state {
+        case .queued: return "Queued"
+        case .processing: return "Starting…"
+        case .failed: return "Failed"
+        }
+    }
+
+    private var progressValue: Double? {
+        guard isActive else { return nil }
+        switch liveStatus {
+        case .downloadingVideo(let p), .transcribing(let p):
+            return p
+        default:
+            return nil
+        }
     }
 }

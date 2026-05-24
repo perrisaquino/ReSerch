@@ -894,7 +894,11 @@ struct TranscriptDetailView: View {
         }
     }
 
-    private var markdownHighlights: [String] {
+    /// Plain `==text==` highlights without a footnote, paired with the NSRange
+    /// of the full `==...==` match in the transcript. The range is the identity
+    /// we need for the upgrade flow — text alone is ambiguous when the same
+    /// phrase has been highlighted in multiple places.
+    private var markdownHighlights: [PlainMarkdownHighlight] {
         guard let rx = try? NSRegularExpression(
             pattern: #"==(.+?)==(?!\[\^)"#,
             options: .dotMatchesLineSeparators
@@ -902,32 +906,33 @@ struct TranscriptDetailView: View {
         let text = entry.result.transcript
         let ns = text as NSString
         return rx.matches(in: text, range: NSRange(location: 0, length: ns.length))
-            .map { ns.substring(with: $0.range(at: 1)) }
+            .map { match in
+                PlainMarkdownHighlight(
+                    text: ns.substring(with: match.range(at: 1)),
+                    fullRange: match.range
+                )
+            }
     }
 
-    // Parses ==text==[^n] + footnote definitions from the transcript, mirroring
-    // AnnotationsPanel.parseEditorHighlights(). Returns tuples so comments travel with text.
-    private var editorParsedHighlights: [(text: String, comment: String)] {
+    // Parses ==text==[^n] references and pairs each with the full (possibly
+    // multi-paragraph) footnote body, supporting CommonMark continuation
+    // indentation. The footnote index travels with each tuple so duplicate
+    // highlight text doesn't collide on ForEach identity.
+    private var editorParsedHighlights: [(text: String, comment: String, index: String)] {
         let source = entry.result.transcript
         guard !source.isEmpty,
-              let refRx  = try? NSRegularExpression(pattern: #"==(.+?)==\[\^(\d+)\]"#, options: .dotMatchesLineSeparators),
-              let defRx  = try? NSRegularExpression(pattern: #"^\[\^(\d+)\]: (.+)$"#, options: .anchorsMatchLines)
+              let refRx = try? NSRegularExpression(pattern: #"==(.+?)==\[\^(\d+)\]"#, options: .dotMatchesLineSeparators)
         else { return [] }
         let ns = source as NSString
         let full = NSRange(location: 0, length: ns.length)
 
-        var comments: [String: String] = [:]
-        for m in defRx.matches(in: source, range: full) {
-            let idx = ns.substring(with: m.range(at: 1))
-            let val = ns.substring(with: m.range(at: 2))
-            comments[idx] = val
-        }
+        let comments = Self.parseFootnoteDefinitions(in: source)
 
         return refRx.matches(in: source, range: full).compactMap { m in
             guard m.numberOfRanges >= 3 else { return nil }
             let text = ns.substring(with: m.range(at: 1))
             let idx  = ns.substring(with: m.range(at: 2))
-            return (text: text, comment: comments[idx] ?? "")
+            return (text: text, comment: comments[idx] ?? "", index: idx)
         }
     }
 
@@ -958,8 +963,8 @@ struct TranscriptDetailView: View {
             if !ann.comment.isEmpty { block += "\n\n- " + ann.comment }
             sections.append(block)
         }
-        for text in markdownHighlights {
-            sections.append(text)
+        for hl in markdownHighlights {
+            sections.append(hl.text)
         }
         for h in editorParsedHighlights {
             var block = h.text
@@ -1012,20 +1017,23 @@ struct TranscriptDetailView: View {
                 ForEach(entry.result.annotations) { ann in
                     sidePeekHighlightCard(ann)
                 }
-                ForEach(markdownHighlights, id: \.self) { text in
-                    sidePeekMarkdownHighlightCard(text)
+                ForEach(markdownHighlights, id: \.fullRange.location) { hl in
+                    sidePeekMarkdownHighlightCard(hl.text, plainRange: hl.fullRange)
                 }
-                ForEach(editorParsedHighlights, id: \.text) { h in
+                ForEach(editorParsedHighlights, id: \.index) { h in
                     sidePeekMarkdownHighlightCard(h.text, comment: h.comment, isEditable: true)
                 }
             }
         }
     }
 
-    // isEditable = true only for ==text==[^n] highlights (footnote-backed, comment can be stored).
-    // Plain ==text== highlights have no storage so they are read-only.
+    // Two modes:
+    //   1. isEditable: true — `==text==[^n]` footnote-backed highlights, comment lives in [^n]: line
+    //   2. plainRange != nil — plain `==text==` highlights with no comment storage yet.
+    //      Tapping these upgrades the transcript in place by splicing in [^n]
+    //      at the exact match position so the user can attach a comment.
     @ViewBuilder
-    private func sidePeekMarkdownHighlightCard(_ text: String, comment: String = "", isEditable: Bool = false) -> some View {
+    private func sidePeekMarkdownHighlightCard(_ text: String, comment: String = "", isEditable: Bool = false, plainRange: NSRange? = nil) -> some View {
         let isEditing = isEditable && editingMDHighlightText == text
         let accentBlue = Color(red: 0.35, green: 0.75, blue: 1.0)
         let hlBar      = Color(red: 0.96, green: 0.65, blue: 0.12)
@@ -1088,13 +1096,11 @@ struct TranscriptDetailView: View {
                 }
                 .padding(.leading, 14)
             } else if isEditable {
-                Text(comment.isEmpty ? "Add a comment\u{2026}" : comment)
-                    .font(.system(size: 14))
-                    .foregroundStyle(comment.isEmpty ? .white.opacity(0.32) : .white.opacity(0.62))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 14)
-                    .padding(.top, 4)
-                    .padding(.bottom, 4)
+                addCommentPlaceholder(commentText: comment)
+            } else if plainRange != nil {
+                // Plain ==text== row — show the same "Add a comment…" affordance,
+                // but tapping triggers an upgrade to a footnote-backed highlight.
+                addCommentPlaceholder(commentText: "")
             } else if !comment.isEmpty {
                 Text(comment)
                     .font(.system(size: 13))
@@ -1119,15 +1125,38 @@ struct TranscriptDetailView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
-            guard isEditable, !isEditing else { return }
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                editingMDHighlightText = text
-                editingMDHighlightBuffer = comment
-                editingAnnotationID = nil
+            if isEditing { return }
+            if isEditable {
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                    editingMDHighlightText = text
+                    editingMDHighlightBuffer = comment
+                    editingAnnotationID = nil
+                }
+                focusedMDHighlightText = text
+            } else if let range = plainRange {
+                upgradePlainHighlight(text: text, fullRange: range)
             }
-            focusedMDHighlightText = text
         }
         .animation(.spring(response: 0.28, dampingFraction: 0.82), value: isEditing)
+    }
+
+    /// Inline "Add a comment…" affordance with a leading plus-bubble icon.
+    /// Same visual for: empty-comment editable footnote row + plain row (pre-upgrade).
+    private func addCommentPlaceholder(commentText: String) -> some View {
+        HStack(spacing: 6) {
+            if commentText.isEmpty {
+                Image(systemName: "plus.bubble")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.45))
+            }
+            Text(commentText.isEmpty ? "Add a comment\u{2026}" : commentText)
+                .font(.system(size: 14))
+                .foregroundStyle(commentText.isEmpty ? .white.opacity(0.45) : .white.opacity(0.70))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.leading, 14)
+        .padding(.top, 4)
+        .padding(.bottom, 4)
     }
 
     private var notebookSidePeekSection: some View {
@@ -1401,13 +1430,7 @@ struct TranscriptDetailView: View {
                 }
                 .padding(.leading, 14)
             } else {
-                Text(ann.comment.isEmpty ? "Add a comment\u{2026}" : ann.comment)
-                    .font(.system(size: 14))
-                    .foregroundStyle(ann.comment.isEmpty ? .white.opacity(0.32) : .white.opacity(0.70))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 14)
-                    .padding(.top, 4)
-                    .padding(.bottom, 4)
+                addCommentPlaceholder(commentText: ann.comment)
             }
         }
         .padding(.horizontal, 14)
@@ -1482,6 +1505,10 @@ struct TranscriptDetailView: View {
         if let idx = entry.result.annotations.firstIndex(where: { $0.id == ann.id }) {
             entry.result.annotations[idx].comment = trimmed
             vm.updateEntry(entry)
+            // User explicitly tapped Save — flush to disk immediately so a fast
+            // force-quit after the edit can't lose the comment. The async path
+            // alone is vulnerable to a kill before Task.detached writes through.
+            vm.saveHistory()
         }
         editingAnnotationID = nil
         editingAnnotationBuffer = ""
@@ -1508,15 +1535,216 @@ struct TranscriptDetailView: View {
     // given highlight text. This is the canonical storage for ==text==[^n] comment
     // edits — the markdown export reads directly from the transcript, so this keeps
     // exports automatically in sync without any additional formatting pass.
+    /// Promotes a plain `==text==` highlight to a footnote-backed `==text==[^n]`
+    /// so the user can attach a comment to it. Picks the next-available footnote
+    /// index by scanning existing `[^n]:` definitions, splices the reference at
+    /// the exact match range (NOT by text-search, so duplicate phrases don't
+    /// collide), and appends an empty `[^n]:` definition line. Then enters
+    /// edit mode on the new footnote so the user can type a comment immediately.
+    private func upgradePlainHighlight(text: String, fullRange: NSRange) {
+        let original = entry.result.transcript
+        guard let upgraded = Self.applyPlainHighlightUpgrade(transcript: original, fullRange: fullRange) else {
+            return
+        }
+        entry.result.transcript = upgraded.transcript
+        vm.updateEntry(entry)
+        vm.saveHistory()
+        refreshEntry()
+        // Open the editor on the freshly-promoted highlight.
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+            editingMDHighlightText = text
+            editingMDHighlightBuffer = ""
+            editingAnnotationID = nil
+        }
+        focusedMDHighlightText = text
+    }
+
+    /// Pure transformation, factored out for unit testing. Returns the new
+    /// transcript + the footnote index that was assigned, or nil if the range
+    /// doesn't point at a well-formed `==...==` (defensive guard against stale
+    /// ranges from concurrent edits).
+    static func applyPlainHighlightUpgrade(transcript: String, fullRange: NSRange) -> (transcript: String, footnoteIndex: Int)? {
+        let ns = transcript as NSString
+        guard fullRange.location >= 0,
+              fullRange.location + fullRange.length <= ns.length,
+              fullRange.length >= 5 else { return nil }
+        let matched = ns.substring(with: fullRange)
+        guard matched.hasPrefix("==") && matched.hasSuffix("==") else { return nil }
+        // Refuse to operate on something that already has a footnote attached.
+        let afterEnd = fullRange.location + fullRange.length
+        if afterEnd + 1 < ns.length {
+            let next = ns.substring(with: NSRange(location: afterEnd, length: 2))
+            if next == "[^" { return nil }
+        }
+
+        let nextIndex = Self.nextFootnoteIndex(in: transcript)
+        let suffix = "[^\(nextIndex)]"
+        // Splice the suffix in right after the closing == so neither the rest
+        // of the transcript nor any other ==...== match is touched.
+        let head = ns.substring(with: NSRange(location: 0, length: afterEnd))
+        let tail = ns.substring(with: NSRange(location: afterEnd, length: ns.length - afterEnd))
+        let withReference = head + suffix + tail
+
+        // Append an empty footnote definition. Convention: a single blank line
+        // separator before the new line if the transcript doesn't already end
+        // on \n\n. Empty body so the existing edit flow saves into it.
+        let definition = "[^\(nextIndex)]: "
+        var withDefinition = withReference
+        if !withDefinition.hasSuffix("\n\n") {
+            if withDefinition.hasSuffix("\n") {
+                withDefinition += "\n"
+            } else {
+                withDefinition += "\n\n"
+            }
+        }
+        withDefinition += definition
+
+        return (transcript: withDefinition, footnoteIndex: nextIndex)
+    }
+
+    /// Scans `[^n]:` definitions + any `==text==[^n]` references and returns
+    /// max(n) + 1, defaulting to 1 when none exist. Defensive against gaps —
+    /// always picks past the max so we never collide with an existing slot.
+    static func nextFootnoteIndex(in transcript: String) -> Int {
+        var maxIdx = 0
+        if let defRx = try? NSRegularExpression(pattern: #"\[\^(\d+)\]"#) {
+            let ns = transcript as NSString
+            let full = NSRange(location: 0, length: ns.length)
+            for m in defRx.matches(in: transcript, range: full) {
+                if let n = Int(ns.substring(with: m.range(at: 1))) {
+                    maxIdx = max(maxIdx, n)
+                }
+            }
+        }
+        return maxIdx + 1
+    }
+
     private func saveMarkdownHighlightComment(highlightText: String, newComment: String) {
         guard let idx = footnoteIndex(for: highlightText) else { return }
-        let prefix = "[^\(idx)]: "
-        let lines = entry.result.transcript.components(separatedBy: "\n")
-        entry.result.transcript = lines.map { line in
-            line.hasPrefix(prefix) ? prefix + newComment : line
-        }.joined(separator: "\n")
+        entry.result.transcript = Self.writeFootnoteDefinition(
+            transcript: entry.result.transcript,
+            index: idx,
+            comment: newComment
+        )
         vm.updateEntry(entry)
+        // Same durability rationale as saveAnnotationComment — explicit Save
+        // should mean on-disk, not just in-memory.
+        vm.saveHistory()
         refreshEntry()
+    }
+
+    // MARK: - Footnote serialization (multi-line aware)
+
+    /// Serializes a possibly-multi-line comment as a CommonMark-compliant
+    /// footnote definition block. First line stays on the `[^n]:` header;
+    /// each subsequent line is indented with 4 spaces (or kept blank as-is)
+    /// so markdown keeps treating it as part of `[^n]`.
+    ///
+    /// Example output for `"para one\n\npara two"`:
+    /// ```
+    /// [^1]: para one
+    ///
+    ///     para two
+    /// ```
+    static func serializeFootnote(index: String, comment: String) -> String {
+        let lines = comment.components(separatedBy: "\n")
+        guard let first = lines.first else { return "[^\(index)]: " }
+        var out = "[^\(index)]: \(first)"
+        for line in lines.dropFirst() {
+            if line.isEmpty {
+                out += "\n"
+            } else {
+                out += "\n    \(line)"
+            }
+        }
+        return out
+    }
+
+    /// Parses every footnote block in the transcript, returning index → body.
+    /// A footnote block starts at a `[^n]:` line and consumes every following
+    /// blank or 4-space-indented line until a non-blank, non-indented line.
+    /// Trailing blank lines inside the block are stripped — the body never
+    /// ends in a phantom newline that would echo back as extra spacing.
+    static func parseFootnoteDefinitions(in transcript: String) -> [String: String] {
+        let lines = transcript.components(separatedBy: "\n")
+        var result: [String: String] = [:]
+        var i = 0
+        while i < lines.count {
+            guard let header = parseFootnoteHeader(lines[i]) else { i += 1; continue }
+            var continuationLines: [String] = []
+            var j = i + 1
+            while j < lines.count {
+                let next = lines[j]
+                if next.isEmpty || next.hasPrefix("    ") || next.hasPrefix("\t") {
+                    continuationLines.append(next)
+                    j += 1
+                } else {
+                    break
+                }
+            }
+            // Strip trailing blank-only lines so the body doesn't accumulate
+            // ghost newlines that would echo back on re-serialization.
+            while let last = continuationLines.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+                continuationLines.removeLast()
+            }
+            var body = header.body
+            for c in continuationLines {
+                body += "\n"
+                if c.hasPrefix("    ") { body += String(c.dropFirst(4)) }
+                else if c.hasPrefix("\t") { body += String(c.dropFirst(1)) }
+                // Blank lines contribute their (empty) string, preserving
+                // paragraph breaks in the round-tripped body.
+            }
+            result[header.index] = body
+            i = j
+        }
+        return result
+    }
+
+    /// Returns (index, body) for a single `[^n]:` header line, or nil if the
+    /// line is not a footnote header.
+    static func parseFootnoteHeader(_ line: String) -> (index: String, body: String)? {
+        let ns = line as NSString
+        guard let rx = try? NSRegularExpression(pattern: #"^\[\^(\d+)\]: ?(.*)$"#),
+              let m = rx.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)),
+              m.numberOfRanges >= 3 else { return nil }
+        return (
+            index: ns.substring(with: m.range(at: 1)),
+            body: ns.substring(with: m.range(at: 2))
+        )
+    }
+
+    /// Replaces the entire footnote block for `index` with a freshly serialized
+    /// version. Walks line-by-line so multi-line existing blocks are removed
+    /// wholesale, not just the header line (the previous one-line implementation
+    /// would orphan continuation paragraphs into transcript body text).
+    static func writeFootnoteDefinition(transcript: String, index: String, comment: String) -> String {
+        let lines = transcript.components(separatedBy: "\n")
+        let replacementBlock = serializeFootnote(index: index, comment: comment).components(separatedBy: "\n")
+        var out: [String] = []
+        var i = 0
+        var replaced = false
+        while i < lines.count {
+            if let header = parseFootnoteHeader(lines[i]), header.index == index, !replaced {
+                out.append(contentsOf: replacementBlock)
+                replaced = true
+                // Skip the old block: header + its continuation lines.
+                var j = i + 1
+                while j < lines.count {
+                    let next = lines[j]
+                    if next.isEmpty || next.hasPrefix("    ") || next.hasPrefix("\t") {
+                        j += 1
+                    } else {
+                        break
+                    }
+                }
+                i = j
+                continue
+            }
+            out.append(lines[i])
+            i += 1
+        }
+        return out.joined(separator: "\n")
     }
 
     /// Best-effort top safe-area inset (status bar + dynamic island). Used to
@@ -1880,6 +2108,17 @@ struct TranscriptDetailView: View {
         }
         return nil
     }
+}
+
+// MARK: - Plain Markdown Highlight
+
+/// Identity-carrying wrapper for a plain `==text==` highlight (no footnote) shown
+/// in the side peek. `fullRange` is the NSRange of the entire `==...==` match in
+/// the transcript — used as the splice site when the user upgrades a plain
+/// highlight to a footnote-backed one so they can attach a comment to it.
+fileprivate struct PlainMarkdownHighlight: Hashable {
+    let text: String
+    let fullRange: NSRange
 }
 
 // MARK: - Shared Button Style
