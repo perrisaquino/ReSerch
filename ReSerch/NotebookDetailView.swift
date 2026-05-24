@@ -87,7 +87,8 @@ struct NotebookDetailView: View {
                                 onCopy: { copyMarkdown(for: entry) },
                                 onDelete: { vm.deleteEntry(entry) },
                                 onRename: { vm.renameEntry(entry, to: $0) },
-                                onMoveToNotebook: { singleMoveEntry = entry }
+                                onMoveToNotebook: { singleMoveEntry = entry },
+                                markdownProvider: { vm.markdownFor(entry) }
                             )
                             Divider()
                                 .background(Color.white.opacity(0.08))
@@ -311,7 +312,11 @@ struct NotebookDetailView: View {
         let selectedEntries = vm.transcripts(in: nb).filter { selectedIDs.contains($0.id) }
         return HStack(spacing: 12) {
             Button {
-                let md = selectedEntries.map { vm.markdownFor($0) }.joined(separator: "\n\n---\n\n")
+                // Blank-line gap instead of `---` separator: each entry already
+                // owns its own YAML frontmatter with `---` delimiters, so a `---`
+                // join produces a `---\n---` sandwich that reads as duplicated
+                // frontmatter in markdown viewers.
+                let md = selectedEntries.map { vm.markdownFor($0) }.joined(separator: "\n\n\n")
                 UIPasteboard.general.string = md
                 selectionMode = false
                 selectedIDs.removeAll()
@@ -530,7 +535,8 @@ struct UnfiledView: View {
                                 onCopy: { copyMarkdown(for: entry) },
                                 onDelete: { vm.deleteEntry(entry) },
                                 onRename: { vm.renameEntry(entry, to: $0) },
-                                onMoveToNotebook: { singleMoveEntry = entry }
+                                onMoveToNotebook: { singleMoveEntry = entry },
+                                markdownProvider: { vm.markdownFor(entry) }
                             )
                             Divider()
                                 .background(Color.white.opacity(0.08))

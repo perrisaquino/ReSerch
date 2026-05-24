@@ -154,10 +154,14 @@ struct ContentView: View {
                         PaywallPresenter.present()
                         return
                     }
+                    // Blank-line gap instead of `---` separator: each entry already
+                    // owns its own YAML frontmatter with `---` delimiters, so a `---`
+                    // join produces a `---\n---` sandwich that reads as duplicated
+                    // frontmatter in markdown viewers.
                     let markdown = vm.history
                         .filter { selectedIDs.contains($0.id) }
                         .map { vm.markdownFor($0) }
-                        .joined(separator: "\n\n---\n\n")
+                        .joined(separator: "\n\n\n")
                     UIPasteboard.general.string = markdown
                     gate.recordExport()
                     Analytics.shared.track(.transcriptExported, properties: [
@@ -263,7 +267,8 @@ struct ContentView: View {
                                     onCopy: { copyMarkdown(for: entry) },
                                     onDelete: { vm.deleteEntry(entry) },
                                     onRename: { vm.renameEntry(entry, to: $0) },
-                                    onMoveToNotebook: { singleMoveEntry = entry }
+                                    onMoveToNotebook: { singleMoveEntry = entry },
+                                    markdownProvider: { vm.markdownFor(entry) }
                                 )
                                 Divider()
                                     .background(Color.white.opacity(0.08))
@@ -469,6 +474,13 @@ struct TranscriptRow: View {
     let onRename: (String) -> Void
     /// Triggered from the row's "..." menu. Caller decides how to present the move sheet.
     var onMoveToNotebook: (() -> Void)? = nil
+    /// Produces the markdown to share when the row's Share button is tapped.
+    /// Injected by the parent (which holds the `TranscriptViewModel`) so the row
+    /// never has to know about template prefs or notebook lookup — every caller
+    /// passes `{ vm.markdownFor(entry) }` and gets template-aware output for free.
+    /// **No default value on purpose:** if a new call site forgets to pass this,
+    /// the compiler should refuse rather than ship an empty share output.
+    let markdownProvider: () -> String
 
     @State private var showCopied = false
     @State private var showRenameAlert = false
@@ -654,7 +666,10 @@ struct TranscriptRow: View {
 
             Button {
                 let md = vm_markdown()
-                let av = UIActivityViewController(activityItems: [md], applicationActivities: nil)
+                let av = UIActivityViewController(
+                    activityItems: [MarkdownShareItem(markdown: md)],
+                    applicationActivities: nil
+                )
                 if let popover = av.popoverPresentationController,
                    let window = UIApplication.shared.keyForegroundWindow {
                     popover.sourceView = window
@@ -684,7 +699,7 @@ struct TranscriptRow: View {
     }
 
     private func vm_markdown() -> String {
-        MarkdownFormatter.format(entry.result)
+        markdownProvider()
     }
 }
 
