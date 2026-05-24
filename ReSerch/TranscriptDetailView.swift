@@ -2040,14 +2040,17 @@ struct TranscriptDetailView: View {
     }
 
     private func presentShareSheet() {
-        let activityItems: [Any]
-        if stylePrefs.richTextMode,
-           let attrStr = RichTextFormatter.build(entry.result) {
-            activityItems = [attrStr]
-        } else {
-            activityItems = [vm.markdownFor(entry)]
-        }
-        let av = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        // Always flow from the template-aware formatter so YAML/meta-block
+        // toggles are respected. MarkdownShareItem picks plain vs rich per
+        // destination — Notes/Mail/Messages get attributed (tappable links),
+        // text editors get clean markdown. The in-app `stylePrefs.richTextMode`
+        // toggle still drives preview rendering elsewhere; share output is now
+        // centralized here.
+        let md = vm.markdownFor(entry)
+        let av = UIActivityViewController(
+            activityItems: [MarkdownShareItem(markdown: md)],
+            applicationActivities: nil
+        )
         // iPad popover anchor — required on iPad, harmless on iPhone.
         if let popover = av.popoverPresentationController,
            let window = UIApplication.shared.keyForegroundWindow {
