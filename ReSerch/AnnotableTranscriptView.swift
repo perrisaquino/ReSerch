@@ -143,16 +143,26 @@ struct AnnotableTranscriptView: UIViewRepresentable {
         }
 
         /// Walks the attributed substring's `.foregroundColor` runs and skips
-        /// any run whose color is `.clear` — that's how `MarkdownStyling` flags
-        /// hidden marker characters (it pairs clear color with a 0.001pt font
-        /// so markers take no visual space). What's left is the human-rendered
-        /// text exactly as the user saw it on screen.
+        /// any run whose color is effectively transparent — that's how
+        /// `MarkdownStyling` flags hidden marker characters (it pairs clear
+        /// foreground with a 0.001pt font so markers take no visual space).
+        /// What's left is the human-rendered text exactly as the user saw it.
+        ///
+        /// We check alpha <= 0.01 rather than `color == .clear` because
+        /// `UIColor.clear` equality is brittle across dynamic / trait-resolved
+        /// color instances — two visually-identical transparent colors may
+        /// not be `==` if one of them resolved through a UITraitCollection.
+        /// Alpha is the load-bearing visual property and matches the intent.
         private static func visibleText(in attr: NSAttributedString) -> String {
             var out = ""
             let full = NSRange(location: 0, length: attr.length)
             let ns = attr.string as NSString
             attr.enumerateAttribute(.foregroundColor, in: full, options: []) { value, range, _ in
-                if let color = value as? UIColor, color == .clear { return }
+                if let color = value as? UIColor {
+                    var alpha: CGFloat = 1
+                    color.getRed(nil, green: nil, blue: nil, alpha: &alpha)
+                    if alpha <= 0.01 { return }
+                }
                 out += ns.substring(with: range)
             }
             return out
