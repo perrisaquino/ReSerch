@@ -101,17 +101,24 @@ final class iCloudSyncService: ObservableObject {
             return
         }
         status = .migrating
+        var migrationSucceeded = false
         defer {
-            UserDefaults.standard.set(true, forKey: migrationFlagKey)
+            if migrationSucceeded {
+                UserDefaults.standard.set(true, forKey: migrationFlagKey)
+            } else {
+                print("[iCloudSync] migration incomplete; will retry on next launch")
+            }
             recomputeStatus()
         }
 
         // Migrate each target file. Skip if the iCloud copy already exists (a previous
-        // device may have already populated it) — in that case the local copy is
-        // redundant and we leave both untouched. Manual merge would be a v2 feature.
-        copyOneFile(target: .history, intoContainer: containerDocs)
-        copyOneFile(target: .notebooks, intoContainer: containerDocs)
-        copyImagesDirectory(intoContainer: containerDocs)
+        // device may have already populated it), except for the dangerous case
+        // where cloud has an empty array and local has real rows. In that case
+        // local wins and the empty cloud file is preserved with a timestamp.
+        let historyOK = copyOneFile(target: .history, intoContainer: containerDocs)
+        let notebooksOK = copyOneFile(target: .notebooks, intoContainer: containerDocs)
+        let imagesOK = copyImagesDirectory(intoContainer: containerDocs)
+        migrationSucceeded = historyOK && notebooksOK && imagesOK
     }
 
     /// Subscribe to remote-change notifications. The handler fires on the main actor
@@ -183,7 +190,7 @@ final class iCloudSyncService: ObservableObject {
 
     // MARK: - Migration helpers
 
-    private func copyOneFile(target: SyncTarget, intoContainer: URL) {
+    private func copyOneFile(target: SyncTarget, intoContainer: URL) -> Bool {
         let local = localURL(for: target)
         let remote: URL
         switch target {
@@ -192,36 +199,90 @@ final class iCloudSyncService: ObservableObject {
         case .notebooks:
             remote = intoContainer.appendingPathComponent("reserch_notebooks.json")
         case .carouselImages:
-            return // handled by copyImagesDirectory(intoContainer:)
+            return true // handled by copyImagesDirectory(intoContainer:)
         }
 
         let fm = FileManager.default
-        guard fm.fileExists(atPath: local.path) else { return }
-        if fm.fileExists(atPath: remote.path) { return } // remote wins, leave local
+        guard fm.fileExists(atPath: local.path) else { return true }
+        if fm.fileExists(atPath: remote.path) {
+            if shouldReplaceEmptyRemoteWithLocal(local: local, remote: remote) {
+                return preserveEmptyRemoteThenCopyLocal(local: local, remote: remote)
+            }
+            return true // remote wins, leave local intact for manual recovery.
+        }
 
         do {
             try fm.copyItem(at: local, to: remote)
+            return true
         } catch {
             print("[iCloudSync] migrate \(remote.lastPathComponent) failed: \(error)")
+            return false
         }
     }
 
-    private func copyImagesDirectory(intoContainer: URL) {
+    private func copyImagesDirectory(intoContainer: URL) -> Bool {
         let fm = FileManager.default
         let local = localURL(for: .carouselImages)
         let remote = intoContainer.appendingPathComponent("CarouselImages", isDirectory: true)
 
-        guard fm.fileExists(atPath: local.path) else { return }
+        guard fm.fileExists(atPath: local.path) else { return true }
         if !fm.fileExists(atPath: remote.path) {
-            try? fm.createDirectory(at: remote, withIntermediateDirectories: true)
+            do {
+                try fm.createDirectory(at: remote, withIntermediateDirectories: true)
+            } catch {
+                print("[iCloudSync] create image directory failed: \(error)")
+                return false
+            }
         }
 
-        guard let items = try? fm.contentsOfDirectory(atPath: local.path) else { return }
+        guard let items = try? fm.contentsOfDirectory(atPath: local.path) else { return false }
         for name in items {
             let src = local.appendingPathComponent(name)
             let dst = remote.appendingPathComponent(name)
             if fm.fileExists(atPath: dst.path) { continue }
-            try? fm.copyItem(at: src, to: dst)
+            do {
+                try fm.copyItem(at: src, to: dst)
+            } catch {
+                print("[iCloudSync] copy image \(name) failed: \(error)")
+                return false
+            }
+        }
+        return true
+    }
+
+    private func shouldReplaceEmptyRemoteWithLocal(local: URL, remote: URL) -> Bool {
+        guard let localCount = jsonArrayCount(at: local),
+              let remoteCount = jsonArrayCount(at: remote) else {
+            return false
+        }
+        return localCount > 0 && remoteCount == 0
+    }
+
+    private func jsonArrayCount(at url: URL) -> Int? {
+        guard let data = try? Data(contentsOf: url),
+              let array = try? JSONSerialization.jsonObject(with: data) as? [Any] else {
+            return nil
+        }
+        return array.count
+    }
+
+    private func preserveEmptyRemoteThenCopyLocal(local: URL, remote: URL) -> Bool {
+        let fm = FileManager.default
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let base = remote.deletingPathExtension().lastPathComponent
+        let backup = remote.deletingLastPathComponent()
+            .appendingPathComponent("\(base).cloud-empty.\(stamp).json")
+        do {
+            try fm.moveItem(at: remote, to: backup)
+            try fm.copyItem(at: local, to: remote)
+            print("[iCloudSync] preserved empty cloud file as \(backup.lastPathComponent), migrated non-empty local \(remote.lastPathComponent)")
+            return true
+        } catch {
+            print("[iCloudSync] local-over-empty-cloud migration failed: \(error)")
+            if !fm.fileExists(atPath: remote.path), fm.fileExists(atPath: backup.path) {
+                try? fm.moveItem(at: backup, to: remote)
+            }
+            return false
         }
     }
 

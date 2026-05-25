@@ -259,9 +259,10 @@ struct SettingsView: View {
             // the current TranscriptViewModel via the environment-injected reference.
             // To keep this section self-contained we read the JSON files directly
             // from the sync service so the export works even before the view model
-            // has been wired up. Falls back to empty arrays if either file is absent.
-            let history = (try? Self.loadHistory()) ?? []
-            let notebooks = (try? Self.loadNotebooks()) ?? []
+            // has been wired up. Missing files are empty; unreadable files must
+            // fail loudly so a "backup" never silently exports empty data.
+            let history = try Self.loadHistory()
+            let notebooks = try Self.loadNotebooks()
             let url = try DataExportService.makeArchive(history: history, notebooks: notebooks)
             presentShareSheet(for: url)
         } catch {
