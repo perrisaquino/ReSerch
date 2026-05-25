@@ -18,10 +18,13 @@ struct CarouselCleanTranscriptView: View {
     var annotations: [Annotation] = []
     /// Fired when the user long-presses to highlight text inside a slide. Caller adds
     /// an `Annotation` with the supplied `slideIndex`.
-    var onHighlight: ((_ text: String, _ offset: Int, _ slideIndex: Int) -> Void)? = nil
+    /// `clean` is the human-visible text (markdown markers stripped); `raw` is the
+    /// underlying substring used for re-locating the highlight in the slide's
+    /// raw recognized text.
+    var onHighlight: ((_ clean: String, _ raw: String, _ offset: Int, _ slideIndex: Int) -> Void)? = nil
     /// Fired when the user picks "Add Note" from the highlight menu. Caller routes to
     /// the comment-entry sheet, then persists with the slide index when confirmed.
-    var onAddNote: ((_ text: String, _ offset: Int, _ slideIndex: Int) -> Void)? = nil
+    var onAddNote: ((_ clean: String, _ raw: String, _ offset: Int, _ slideIndex: Int) -> Void)? = nil
 
     var body: some View {
         if slides.isEmpty {
@@ -65,11 +68,11 @@ struct CarouselCleanTranscriptView: View {
                 AnnotableTranscriptView(
                     text: cleaned,
                     annotations: annotations.filter { $0.slideIndex == slide.index },
-                    onHighlight: { text, offset in
-                        onHighlight?(text, offset, slide.index)
+                    onHighlight: { clean, raw, offset in
+                        onHighlight?(clean, raw, offset, slide.index)
                     },
-                    onAddNote: { text, offset in
-                        onAddNote?(text, offset, slide.index)
+                    onAddNote: { clean, raw, offset in
+                        onAddNote?(clean, raw, offset, slide.index)
                     }
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)

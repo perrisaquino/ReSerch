@@ -6,8 +6,14 @@ import UIKit
 struct AnnotableTranscriptView: UIViewRepresentable {
     let text: String
     let annotations: [Annotation]
-    var onHighlight: ((String, Int) -> Void)?
-    var onAddNote: ((String, Int) -> Void)?
+    /// Fired when the user picks "Comment" from the text-selection menu.
+    /// `clean` is the human-visible text exactly as rendered (markdown syntax
+    /// characters like `==` and `**` already stripped). `raw` is the underlying
+    /// substring including those characters — kept so we can re-locate the
+    /// highlight in the raw transcript later. `offset` is the location in raw
+    /// transcript coordinates.
+    var onHighlight: ((_ clean: String, _ raw: String, _ offset: Int) -> Void)?
+    var onAddNote: ((_ clean: String, _ raw: String, _ offset: Int) -> Void)?
 
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
@@ -62,19 +68,23 @@ struct AnnotableTranscriptView: UIViewRepresentable {
     }
 
     private func rangeForAnnotation(_ ann: Annotation, in ns: NSString) -> NSRange? {
-        guard !ann.text.isEmpty, ns.length > 0 else { return nil }
+        // Prefer `rawText` (the underlying substring with markdown markers
+        // intact) for matching against the raw transcript; fall back to `text`
+        // for legacy annotations stored before `rawText` was added.
+        let needle = ann.rawText ?? ann.text
+        guard !needle.isEmpty, ns.length > 0 else { return nil }
         let searchStart = max(0, ann.offset - 300)
         let maxEnd      = ns.length
         if searchStart < maxEnd {
-            let searchLen = min(maxEnd - searchStart, ann.text.count + 600)
+            let searchLen = min(maxEnd - searchStart, needle.count + 600)
             if searchLen > 0 {
                 let searchRange = NSRange(location: searchStart, length: searchLen)
-                let found = ns.range(of: ann.text, options: [], range: searchRange)
+                let found = ns.range(of: needle, options: [], range: searchRange)
                 if found.location != NSNotFound { return found }
             }
         }
         // Fallback: search full string (handles edited/shifted transcripts)
-        let full = ns.range(of: ann.text, options: [])
+        let full = ns.range(of: needle, options: [])
         return full.location != NSNotFound ? full : nil
     }
 
@@ -82,11 +92,15 @@ struct AnnotableTranscriptView: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         weak var textView: UITextView?
-        var onHighlight: ((String, Int) -> Void)?
-        var onAddNote: ((String, Int) -> Void)?
+        var onHighlight: ((_ clean: String, _ raw: String, _ offset: Int) -> Void)?
+        var onAddNote: ((_ clean: String, _ raw: String, _ offset: Int) -> Void)?
         var annotations: [Annotation]
 
-        init(onHighlight: ((String, Int) -> Void)?, onAddNote: ((String, Int) -> Void)?, annotations: [Annotation]) {
+        init(
+            onHighlight: ((_ clean: String, _ raw: String, _ offset: Int) -> Void)?,
+            onAddNote: ((_ clean: String, _ raw: String, _ offset: Int) -> Void)?,
+            annotations: [Annotation]
+        ) {
             self.onHighlight = onHighlight
             self.onAddNote   = onAddNote
             self.annotations = annotations
@@ -99,8 +113,14 @@ struct AnnotableTranscriptView: UIViewRepresentable {
                   let fullText = tv.text else {
                 return UIMenu(children: suggestedActions)
             }
-            let selectedText = (fullText as NSString).substring(with: range)
-            guard !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            let rawSelected   = (fullText as NSString).substring(with: range)
+            let attrSub       = tv.attributedText.attributedSubstring(from: range)
+            let cleanSelected = Self.visibleText(in: attrSub)
+            // Guard against empty selections post-clean (e.g., user selected
+            // only marker characters that all got stripped).
+            let trimmedClean = cleanSelected.trimmingCharacters(in: .whitespacesAndNewlines)
+            let textToSend   = trimmedClean.isEmpty ? rawSelected : cleanSelected
+            guard !textToSend.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return UIMenu(children: suggestedActions)
             }
 
@@ -108,7 +128,7 @@ struct AnnotableTranscriptView: UIViewRepresentable {
                 title: "Comment",
                 image: UIImage(systemName: "text.bubble")
             ) { [weak self] _ in
-                self?.onHighlight?(selectedText, range.location)
+                self?.onHighlight?(textToSend, rawSelected, range.location)
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
             }
 
@@ -116,10 +136,26 @@ struct AnnotableTranscriptView: UIViewRepresentable {
                 title: "Add Note",
                 image: UIImage(systemName: "note.text.badge.plus")
             ) { [weak self] _ in
-                self?.onAddNote?(selectedText, range.location)
+                self?.onAddNote?(textToSend, rawSelected, range.location)
             }
 
             return UIMenu(children: [commentAction, noteAction] + suggestedActions)
+        }
+
+        /// Walks the attributed substring's `.foregroundColor` runs and skips
+        /// any run whose color is `.clear` — that's how `MarkdownStyling` flags
+        /// hidden marker characters (it pairs clear color with a 0.001pt font
+        /// so markers take no visual space). What's left is the human-rendered
+        /// text exactly as the user saw it on screen.
+        private static func visibleText(in attr: NSAttributedString) -> String {
+            var out = ""
+            let full = NSRange(location: 0, length: attr.length)
+            let ns = attr.string as NSString
+            attr.enumerateAttribute(.foregroundColor, in: full, options: []) { value, range, _ in
+                if let color = value as? UIColor, color == .clear { return }
+                out += ns.substring(with: range)
+            }
+            return out
         }
     }
 }

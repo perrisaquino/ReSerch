@@ -14,6 +14,10 @@ struct TranscriptDetailView: View {
     // @State on an @Observable object registers it as a dependency — view re-renders when colors change
     @State private var stylePrefs = MarkdownStylePrefs.shared
     @State private var pendingHighlightText: String?
+    /// Raw underlying substring (with markdown markers) of the in-progress
+    /// highlight. Paired with `pendingHighlightText` (clean) so the eventual
+    /// Annotation can store both — `text` for display, `rawText` for matching.
+    @State private var pendingHighlightRawText: String?
     @State private var pendingHighlightOffset: Int?
     /// nil for whole-transcript highlights (regular video). Set when the in-progress
     /// highlight came from a carousel slide so the eventual Annotation gets the
@@ -132,7 +136,8 @@ struct TranscriptDetailView: View {
                                 text: pendingHighlightText ?? "",
                                 comment: comment,
                                 offset: pendingHighlightOffset ?? 0,
-                                slideIndex: pendingHighlightSlideIndex
+                                slideIndex: pendingHighlightSlideIndex,
+                                rawText: pendingHighlightRawText
                             )
                             entry.result.annotations.append(ann)
                             // Magic moment: first time the user makes a transcript "theirs" by
@@ -638,9 +643,9 @@ struct TranscriptDetailView: View {
                 CarouselCleanTranscriptView(
                     slides: slides,
                     annotations: entry.result.annotations,
-                    onHighlight: { text, offset, slideIndex in
+                    onHighlight: { clean, raw, offset, slideIndex in
                         entry.result.annotations.append(
-                            Annotation(text: text, offset: offset, slideIndex: slideIndex)
+                            Annotation(text: clean, offset: offset, slideIndex: slideIndex, rawText: raw)
                         )
                         vm.updateEntry(entry)
                         Analytics.shared.track(.annotationCreated, properties: [
@@ -652,8 +657,9 @@ struct TranscriptDetailView: View {
                             ReviewPromptManager.shared.recordMilestone(.firstAnnotation)
                         }
                     },
-                    onAddNote: { text, offset, slideIndex in
-                        pendingHighlightText = text
+                    onAddNote: { clean, raw, offset, slideIndex in
+                        pendingHighlightText = clean
+                        pendingHighlightRawText = raw
                         pendingHighlightOffset = offset
                         pendingHighlightSlideIndex = slideIndex
                         showNoteInput = true
@@ -663,9 +669,9 @@ struct TranscriptDetailView: View {
                 AnnotableTranscriptView(
                     text: entry.result.transcript,
                     annotations: entry.result.annotations.filter { $0.slideIndex == nil },
-                    onHighlight: { text, offset in
+                    onHighlight: { clean, raw, offset in
                         entry.result.annotations.append(
-                            Annotation(text: text, offset: offset, slideIndex: nil)
+                            Annotation(text: clean, offset: offset, slideIndex: nil, rawText: raw)
                         )
                         vm.updateEntry(entry)
                         Analytics.shared.track(.annotationCreated, properties: [
@@ -677,12 +683,14 @@ struct TranscriptDetailView: View {
                             ReviewPromptManager.shared.recordMilestone(.firstAnnotation)
                         }
                     },
-                    onAddNote: { text, offset in
-                        pendingHighlightText        = text
+                    onAddNote: { clean, raw, offset in
+                        pendingHighlightText        = clean
+                        pendingHighlightRawText     = raw
                         pendingHighlightOffset      = offset
                         pendingHighlightSlideIndex  = nil
-                        // Edit-in-place: if this text already has an annotation, prefill its comment
-                        if let existing = entry.result.annotations.first(where: { $0.text == text && $0.slideIndex == nil }) {
+                        // Edit-in-place: if this text already has an annotation, prefill its comment.
+                        // Match on clean text — both sides store clean in `.text`.
+                        if let existing = entry.result.annotations.first(where: { $0.text == clean && $0.slideIndex == nil }) {
                             pendingExistingAnnotationId = existing.id
                             pendingExistingComment = existing.comment
                         } else {
