@@ -65,13 +65,21 @@ final class TranscriptViewModel {
         // (still-empty) ubiquity container and shows an empty feed.
         iCloudSyncService.shared.migrateLocalToCloudIfNeededSync()
         let tHistory = Date()
-        loadHistory()
+        let historyLoadHealthy = loadHistory()
         print("[ReSerch] loadHistory ⏱ \(Int(Date().timeIntervalSince(tHistory) * 1000))ms")
         let tNotebooks = Date()
-        loadNotebooks()
+        let notebooksLoadHealthy = loadNotebooks()
         print("[ReSerch] loadNotebooks ⏱ \(Int(Date().timeIntervalSince(tNotebooks) * 1000))ms")
-        migrateLegacyCarouselTranscripts()
-        migrateCarouselTranscriptsV2()
+        if historyLoadHealthy && notebooksLoadHealthy && Self.suspendSaves {
+            print("[ReSerch] persistence write lock cleared after healthy load")
+            Self.suspendSaves = false
+        }
+        if Self.suspendSaves {
+            print("[ReSerch] migrations skipped because persistence writes are suspended")
+        } else {
+            migrateLegacyCarouselTranscripts()
+            migrateCarouselTranscriptsV2()
+        }
         print("[ReSerch] TranscriptViewModel.init total ⏱ \(Int(Date().timeIntervalSince(tInit) * 1000))ms")
         Task { await whisperTranscriber.initializeIfCached() }
     }
@@ -719,52 +727,56 @@ final class TranscriptViewModel {
 
     // Used by scenePhase handler — blocks intentionally so data survives process kill
     func saveHistory() {
-        // Bail if a prior load detected corruption — refusing to write
-        // protects whatever (possibly-recoverable) state still exists in the
-        // quarantined file or in iCloud's version history from being clobbered
-        // by an empty / partial in-memory snapshot.
-        guard !Self.suspendSaves else {
-            print("[ReSerch] saveHistory — skipped (suspendSaves=true after corruption)")
-            return
-        }
-        guard let data = try? JSONEncoder().encode(history) else { return }
-        try? data.write(to: historyFileURL, options: .atomic)
+        // safeWrite handles suspendSaves, round-trip validation, and rolling
+        // backup rotation before overwriting the live file.
+        Self.safeWrite(history, to: historyFileURL)
     }
 
     // Used for interactive mutations — off main thread so UI stays instant
     private func saveHistoryAsync() {
-        guard !Self.suspendSaves else { return }
         let snapshot = history
         let url = historyFileURL
         Task.detached(priority: .utility) {
-            guard let data = try? JSONEncoder().encode(snapshot) else { return }
-            try? data.write(to: url, options: .atomic)
+            Self.safeWrite(snapshot, to: url)
         }
     }
 
-    private func loadHistory() {
+    @discardableResult
+    private func loadHistory() -> Bool {
         print("[ReSerch] loadHistory called")
         guard let data = try? Data(contentsOf: historyFileURL) else {
+            if Self.suspendSaves {
+                print("[ReSerch] loadHistory — no file while write lock is active; refusing to treat as fresh")
+                return false
+            }
             print("[ReSerch] loadHistory — no file, starting fresh")
-            return
+            return true
         }
         do {
             history = try JSONDecoder().decode([TranscriptEntry].self, from: data)
             print("[ReSerch] loadHistory — loaded \(history.count) entries")
+            return true
         } catch {
             print("[ReSerch] loadHistory — decode FAILED: \(error)")
             rLog(.fail, step: "Load", "Decode failed: \(error)")
-            // Preserve the corrupt file under a timestamped name instead of
-            // deleting it — historical bug: the previous behavior nuked user
-            // data permanently on any decode failure, and the next save wrote
-            // an empty array over iCloud, propagating the loss to every device.
-            // Quarantining gives us a chance to recover data later via support
-            // or a manual repair, and `Self.suspendSaves = true` blocks any
-            // subsequent save from overwriting the preserved file (or worse,
-            // overwriting whatever cloud copy might still hold the real data).
+            // Try to recover from the most recent rolling backup before giving up.
+            if let recovered = Self.recoverFromBackups(originalURL: historyFileURL, decode: { try JSONDecoder().decode([TranscriptEntry].self, from: $0) }) {
+                history = recovered.payload
+                print("[ReSerch] loadHistory — RECOVERED \(history.count) entries from backup \(recovered.sourceFile)")
+                Self.lastRecoveryNote = "Recovered \(history.count) transcripts from backup (\(recovered.sourceFile)). Original file was quarantined."
+                preserveCorruptFile(at: historyFileURL, label: "history")
+                Self.suspendSaves = false
+                Self.safeWrite(history, to: historyFileURL)
+                return true
+            }
+            // No backup worked. Preserve the corrupt file, suspend writes,
+            // surface a visible error so the user sees something is wrong
+            // instead of an empty feed with no explanation.
+            Self.suspendSaves = true
             preserveCorruptFile(at: historyFileURL, label: "history")
             history = []
-            Self.suspendSaves = true
+            Self.corruptionAlert = "Couldn't read your transcripts file. It was preserved as a .corrupt.* backup in the app's iCloud container. Writes are frozen until this is resolved. Tap to view path."
+            return false
         }
     }
 
@@ -773,7 +785,22 @@ final class TranscriptViewModel {
     /// don't cascade into overwriting the (possibly still-recoverable) cloud
     /// copy with an empty / partial snapshot. Reset to false by an explicit
     /// repair flow, not by app lifecycle.
-    fileprivate static var suspendSaves: Bool = false
+    private static let suspendSavesKey = "reserch.persistence.suspendSavesAfterCorruption.v1"
+
+    nonisolated fileprivate static var suspendSaves: Bool {
+        get { UserDefaults.standard.bool(forKey: suspendSavesKey) }
+        set { UserDefaults.standard.set(newValue, forKey: suspendSavesKey) }
+    }
+
+    /// Set when a load failed and no backup recovered. ContentView observes
+    /// this and shows a persistent red banner so the user sees the data
+    /// problem instead of an empty feed with no explanation.
+    static var corruptionAlert: String?
+
+    /// Set when a load failed BUT a backup recovered the data. Shown as a
+    /// yellow banner so the user knows something happened and they may want
+    /// to verify the recovered state.
+    static var lastRecoveryNote: String?
 
     /// Renames a corrupt persistence file to `<name>.corrupt.<timestamp>.json`
     /// in the same directory so it survives for diagnostic / recovery use
@@ -792,6 +819,104 @@ final class TranscriptViewModel {
 
     private func preserveCorruptFile(at url: URL, label: String) {
         Self.preserveCorruptFile(at: url, label: label)
+    }
+
+    // MARK: - Defense-in-depth save pipeline
+    //
+    // Three protections on every write:
+    //   1. Round-trip validation: encode → decode → only commit if decode
+    //      succeeds. Refuses to write a file the decoder can't read back.
+    //   2. Rolling backups: rotates the existing file into
+    //      `<name>.backup.1.json` through `.backup.5.json` in a sibling
+    //      `.backups/` directory before each save. If today's save somehow
+    //      goes bad, the previous 5 generations are still on disk.
+    //   3. Quarantine on load failure (above) — never deletes user data.
+    //
+    // None of these protect against the user explicitly deleting the app
+    // (Remove App on iOS wipes the entire container), but they remove every
+    // silent-data-loss path inside the app itself.
+
+    /// Returns `Documents/.backups/` (per the active sync target's docs dir),
+    /// creating it if needed.
+    nonisolated fileprivate static func backupsDirectory(for fileURL: URL) -> URL {
+        let dir = fileURL.deletingLastPathComponent().appendingPathComponent(".backups", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Rotates `name.backup.1.json` → `name.backup.2.json`, etc., dropping the
+    /// oldest generation, then copies the current live file into slot 1.
+    /// Safe to call when the live file doesn't exist yet (skips the copy).
+    nonisolated fileprivate static func rotateBackups(for liveURL: URL, generations: Int = 5) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: liveURL.path) else { return }
+        let dir = backupsDirectory(for: liveURL)
+        let base = liveURL.deletingPathExtension().lastPathComponent
+        // Shuffle existing N..1: backup.5 gets dropped, backup.4 → 5, …, backup.1 → 2.
+        for i in stride(from: generations - 1, through: 1, by: -1) {
+            let src = dir.appendingPathComponent("\(base).backup.\(i).json")
+            let dst = dir.appendingPathComponent("\(base).backup.\(i + 1).json")
+            if fm.fileExists(atPath: src.path) {
+                try? fm.removeItem(at: dst)
+                try? fm.moveItem(at: src, to: dst)
+            }
+        }
+        // Live file becomes the new slot 1.
+        let slot1 = dir.appendingPathComponent("\(base).backup.1.json")
+        try? fm.removeItem(at: slot1)
+        try? fm.copyItem(at: liveURL, to: slot1)
+    }
+
+    /// Encodes `value`, validates the encoded data round-trips through the
+    /// decoder, rotates backups, then writes atomically to `url`. Returns
+    /// true on success; false if any step fails — in which case the live
+    /// file is NOT modified (so a buggy encoder can't clobber good data).
+    @discardableResult
+    nonisolated fileprivate static func safeWrite<T: Codable>(_ value: T, to url: URL, as: T.Type = T.self) -> Bool {
+        guard !suspendSaves else {
+            print("[ReSerch] safeWrite — skipped (suspendSaves=true after corruption)")
+            return false
+        }
+        let encoder = JSONEncoder()
+        guard let data = try? encoder.encode(value) else {
+            print("[ReSerch] safeWrite — encode failed for \(url.lastPathComponent)")
+            return false
+        }
+        // Round-trip: refuse to write a file we can't read back.
+        do {
+            _ = try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            print("[ReSerch] safeWrite — REFUSED \(url.lastPathComponent), round-trip decode failed: \(error)")
+            return false
+        }
+        // Rotate the live copy into the backup chain BEFORE overwriting.
+        rotateBackups(for: url)
+        do {
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            print("[ReSerch] safeWrite — atomic write failed for \(url.lastPathComponent): \(error)")
+            return false
+        }
+    }
+
+    /// Recovery utility: walks `.backups/<name>.backup.1.json` through `.5.json`
+    /// (newest to oldest), returning the first one that decodes successfully.
+    nonisolated fileprivate static func recoverFromBackups<T>(
+        originalURL: URL,
+        decode: (Data) throws -> T,
+        generations: Int = 5
+    ) -> (payload: T, sourceFile: String)? {
+        let dir = backupsDirectory(for: originalURL)
+        let base = originalURL.deletingPathExtension().lastPathComponent
+        for i in 1...generations {
+            let candidate = dir.appendingPathComponent("\(base).backup.\(i).json")
+            guard let data = try? Data(contentsOf: candidate) else { continue }
+            if let decoded = try? decode(data) {
+                return (decoded, candidate.lastPathComponent)
+            }
+        }
+        return nil
     }
 
     // MARK: - Notebooks
@@ -1060,40 +1185,50 @@ final class TranscriptViewModel {
     // MARK: - Notebook persistence
 
     func saveNotebooks() {
-        guard !Self.suspendSaves else {
-            print("[ReSerch] saveNotebooks — skipped (suspendSaves=true after corruption)")
-            return
-        }
-        guard let data = try? JSONEncoder().encode(notebooks) else { return }
-        try? data.write(to: notebooksFileURL, options: .atomic)
+        Self.safeWrite(notebooks, to: notebooksFileURL)
     }
 
     private func saveNotebooksAsync() {
-        guard !Self.suspendSaves else { return }
         let snapshot = notebooks
         let url = notebooksFileURL
         Task.detached(priority: .utility) {
-            guard let data = try? JSONEncoder().encode(snapshot) else { return }
-            try? data.write(to: url, options: .atomic)
+            Self.safeWrite(snapshot, to: url)
         }
     }
 
-    private func loadNotebooks() {
+    @discardableResult
+    private func loadNotebooks() -> Bool {
         guard let data = try? Data(contentsOf: notebooksFileURL) else {
+            if Self.suspendSaves {
+                print("[ReSerch] loadNotebooks — no file while write lock is active; refusing to treat as fresh")
+                return false
+            }
             print("[ReSerch] loadNotebooks — no file, starting fresh")
-            return
+            return true
         }
         do {
             notebooks = try JSONDecoder().decode([Notebook].self, from: data)
             sortNotebooks()
             print("[ReSerch] loadNotebooks — loaded \(notebooks.count) notebooks")
+            return true
         } catch {
             print("[ReSerch] loadNotebooks — decode FAILED: \(error)")
-            // Same data-loss-prevention story as loadHistory: quarantine,
-            // don't delete, and freeze writes so we don't overwrite cloud.
+            // Try rolling backups before quarantining + freezing writes.
+            if let recovered = Self.recoverFromBackups(originalURL: notebooksFileURL, decode: { try JSONDecoder().decode([Notebook].self, from: $0) }) {
+                notebooks = recovered.payload
+                sortNotebooks()
+                print("[ReSerch] loadNotebooks — RECOVERED \(notebooks.count) from backup \(recovered.sourceFile)")
+                Self.lastRecoveryNote = "Recovered \(notebooks.count) notebooks from backup (\(recovered.sourceFile)). Original file was quarantined."
+                preserveCorruptFile(at: notebooksFileURL, label: "notebooks")
+                Self.suspendSaves = false
+                Self.safeWrite(notebooks, to: notebooksFileURL)
+                return true
+            }
+            Self.suspendSaves = true
             preserveCorruptFile(at: notebooksFileURL, label: "notebooks")
             notebooks = []
-            Self.suspendSaves = true
+            Self.corruptionAlert = (Self.corruptionAlert ?? "") + " Notebooks file also unreadable."
+            return false
         }
     }
 }
