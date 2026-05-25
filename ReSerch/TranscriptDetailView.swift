@@ -2047,8 +2047,9 @@ struct TranscriptDetailView: View {
         // toggle still drives preview rendering elsewhere; share output is now
         // centralized here.
         let md = vm.markdownFor(entry)
+        let richMD = vm.richTextShareMarkdownFor(entry)
         let av = UIActivityViewController(
-            activityItems: [MarkdownShareItem(markdown: md)],
+            activityItems: [MarkdownShareItem(markdown: md, richMarkdown: richMD)],
             applicationActivities: nil
         )
         // iPad popover anchor — required on iPad, harmless on iPhone.

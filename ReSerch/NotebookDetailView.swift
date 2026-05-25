@@ -88,7 +88,8 @@ struct NotebookDetailView: View {
                                 onDelete: { vm.deleteEntry(entry) },
                                 onRename: { vm.renameEntry(entry, to: $0) },
                                 onMoveToNotebook: { singleMoveEntry = entry },
-                                markdownProvider: { vm.markdownFor(entry) }
+                                markdownProvider: { vm.markdownFor(entry) },
+                                richMarkdownProvider: { vm.richTextShareMarkdownFor(entry) }
                             )
                             Divider()
                                 .background(Color.white.opacity(0.08))
@@ -536,7 +537,8 @@ struct UnfiledView: View {
                                 onDelete: { vm.deleteEntry(entry) },
                                 onRename: { vm.renameEntry(entry, to: $0) },
                                 onMoveToNotebook: { singleMoveEntry = entry },
-                                markdownProvider: { vm.markdownFor(entry) }
+                                markdownProvider: { vm.markdownFor(entry) },
+                                richMarkdownProvider: { vm.richTextShareMarkdownFor(entry) }
                             )
                             Divider()
                                 .background(Color.white.opacity(0.08))
