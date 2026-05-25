@@ -890,6 +890,12 @@ final class TranscriptViewModel {
             print("[ReSerch] safeWrite — REFUSED \(url.lastPathComponent), round-trip decode failed: \(error)")
             return false
         }
+        // No-op identical writes. This prevents background/inactive lifecycle
+        // saves from repeatedly rotating the same live file through the backup
+        // chain and pushing the last good pre-error backup out of retention.
+        if let existing = try? Data(contentsOf: url), existing == data {
+            return true
+        }
         // Rotate the live copy into the backup chain BEFORE overwriting.
         rotateBackups(for: url)
         do {
