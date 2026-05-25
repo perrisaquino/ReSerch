@@ -737,12 +737,21 @@ final class TranscriptViewModel {
 
     // Used by scenePhase handler — blocks intentionally so data survives process kill
     func saveHistory() {
+        // Bail if a prior load detected corruption — refusing to write
+        // protects whatever (possibly-recoverable) state still exists in the
+        // quarantined file or in iCloud's version history from being clobbered
+        // by an empty / partial in-memory snapshot.
+        guard !Self.suspendSaves else {
+            print("[ReSerch] saveHistory — skipped (suspendSaves=true after corruption)")
+            return
+        }
         guard let data = try? JSONEncoder().encode(history) else { return }
         try? data.write(to: historyFileURL, options: .atomic)
     }
 
     // Used for interactive mutations — off main thread so UI stays instant
     private func saveHistoryAsync() {
+        guard !Self.suspendSaves else { return }
         let snapshot = history
         let url = historyFileURL
         Task.detached(priority: .utility) {
@@ -763,10 +772,44 @@ final class TranscriptViewModel {
         } catch {
             print("[ReSerch] loadHistory — decode FAILED: \(error)")
             rLog(.fail, step: "Load", "Decode failed: \(error)")
-            // Delete corrupt file so next launch starts clean
-            try? FileManager.default.removeItem(at: historyFileURL)
+            // Preserve the corrupt file under a timestamped name instead of
+            // deleting it — historical bug: the previous behavior nuked user
+            // data permanently on any decode failure, and the next save wrote
+            // an empty array over iCloud, propagating the loss to every device.
+            // Quarantining gives us a chance to recover data later via support
+            // or a manual repair, and `Self.suspendSaves = true` blocks any
+            // subsequent save from overwriting the preserved file (or worse,
+            // overwriting whatever cloud copy might still hold the real data).
+            preserveCorruptFile(at: historyFileURL, label: "history")
             history = []
+            Self.suspendSaves = true
         }
+    }
+
+    /// When `true`, every persistence write becomes a no-op. Set by load paths
+    /// after they detect file corruption so subsequent in-memory mutations
+    /// don't cascade into overwriting the (possibly still-recoverable) cloud
+    /// copy with an empty / partial snapshot. Reset to false by an explicit
+    /// repair flow, not by app lifecycle.
+    fileprivate static var suspendSaves: Bool = false
+
+    /// Renames a corrupt persistence file to `<name>.corrupt.<timestamp>.json`
+    /// in the same directory so it survives for diagnostic / recovery use
+    /// instead of being permanently deleted by an autoclean.
+    fileprivate static func preserveCorruptFile(at url: URL, label: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let quarantine = url.deletingLastPathComponent()
+            .appendingPathComponent("\(url.deletingPathExtension().lastPathComponent).corrupt.\(stamp).json")
+        do {
+            try FileManager.default.moveItem(at: url, to: quarantine)
+            print("[ReSerch] loadHistory — quarantined corrupt \(label) file to \(quarantine.lastPathComponent)")
+        } catch {
+            print("[ReSerch] loadHistory — quarantine failed for \(label): \(error)")
+        }
+    }
+
+    private func preserveCorruptFile(at url: URL, label: String) {
+        Self.preserveCorruptFile(at: url, label: label)
     }
 
     // MARK: - Notebooks
@@ -1035,11 +1078,16 @@ final class TranscriptViewModel {
     // MARK: - Notebook persistence
 
     func saveNotebooks() {
+        guard !Self.suspendSaves else {
+            print("[ReSerch] saveNotebooks — skipped (suspendSaves=true after corruption)")
+            return
+        }
         guard let data = try? JSONEncoder().encode(notebooks) else { return }
         try? data.write(to: notebooksFileURL, options: .atomic)
     }
 
     private func saveNotebooksAsync() {
+        guard !Self.suspendSaves else { return }
         let snapshot = notebooks
         let url = notebooksFileURL
         Task.detached(priority: .utility) {
@@ -1059,8 +1107,11 @@ final class TranscriptViewModel {
             print("[ReSerch] loadNotebooks — loaded \(notebooks.count) notebooks")
         } catch {
             print("[ReSerch] loadNotebooks — decode FAILED: \(error)")
-            try? FileManager.default.removeItem(at: notebooksFileURL)
+            // Same data-loss-prevention story as loadHistory: quarantine,
+            // don't delete, and freeze writes so we don't overwrite cloud.
+            preserveCorruptFile(at: notebooksFileURL, label: "notebooks")
             notebooks = []
+            Self.suspendSaves = true
         }
     }
 }
