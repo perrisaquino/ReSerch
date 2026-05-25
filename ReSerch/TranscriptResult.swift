@@ -2,6 +2,11 @@ import Foundation
 
 struct Annotation: Codable, Identifiable {
     let id: UUID
+    /// The human-visible text exactly as rendered to the user when they selected
+    /// it. Used for side-peek display, search, and export. Markdown syntax
+    /// characters (`==`, `**`, footnote refs) are stripped during capture so a
+    /// user who highlights "hello world" inside `==hello world==` sees "hello
+    /// world" in the side-peek panel, not the raw marker-wrapped form.
     var text: String
     var comment: String
     /// Offset relative to the *enclosing* text. For regular video transcripts that's
@@ -13,21 +18,29 @@ struct Annotation: Codable, Identifiable {
     /// Carousel context. nil for regular video transcripts (legacy + non-carousel content).
     /// Set to the slide's `index` field when an annotation lives inside a carousel slide.
     var slideIndex: Int?
+    /// The raw substring of the underlying transcript that the user selected,
+    /// including any markdown syntax characters that were visually hidden at
+    /// selection time. Used ONLY for re-locating the annotation in the raw
+    /// transcript (visual highlight backgrounds, export splicing). Optional so
+    /// legacy annotations (which only stored `text`) still decode cleanly —
+    /// match sites fall back to `text` when `rawText` is nil.
+    var rawText: String?
 
-    init(text: String, comment: String = "", offset: Int, slideIndex: Int? = nil) {
+    init(text: String, comment: String = "", offset: Int, slideIndex: Int? = nil, rawText: String? = nil) {
         self.id = UUID()
         self.text = text
         self.comment = comment
         self.offset = offset
         self.createdAt = Date()
         self.slideIndex = slideIndex
+        self.rawText = rawText
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, text, comment, offset, createdAt, slideIndex
+        case id, text, comment, offset, createdAt, slideIndex, rawText
     }
 
-    // Custom decode so existing annotations (no slideIndex field) still load.
+    // Custom decode so existing annotations (no slideIndex / no rawText field) still load.
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -36,6 +49,7 @@ struct Annotation: Codable, Identifiable {
         offset = try c.decode(Int.self, forKey: .offset)
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         slideIndex = try c.decodeIfPresent(Int.self, forKey: .slideIndex)
+        rawText = try c.decodeIfPresent(String.self, forKey: .rawText)
     }
 }
 

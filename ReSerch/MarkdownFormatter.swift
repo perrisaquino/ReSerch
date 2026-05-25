@@ -128,13 +128,17 @@ enum MarkdownFormatter {
         var coveredEnd = 0
 
         for ann in sorted {
+            // Prefer rawText for matching the raw transcript (it includes any
+            // markdown markers that were inside the user's selection); fall
+            // back to text for legacy annotations stored before rawText existed.
+            let needle = ann.rawText ?? ann.text
             let searchStart = max(coveredEnd, max(0, ann.offset - 300))
             let maxEnd      = raw.length
             guard searchStart < maxEnd else { continue }
-            let searchLen   = min(maxEnd - searchStart, ann.text.count + 600)
+            let searchLen   = min(maxEnd - searchStart, needle.count + 600)
             guard searchLen > 0 else { continue }
             let searchRange = NSRange(location: searchStart, length: searchLen)
-            let found = raw.range(of: ann.text, options: [], range: searchRange)
+            let found = raw.range(of: needle, options: [], range: searchRange)
             guard found.location != NSNotFound, found.location >= coveredEnd else { continue }
 
             let close = ann.comment.isEmpty ? "==" : "==^[\(ann.comment)]"
@@ -224,7 +228,13 @@ enum MarkdownFormatter {
         template: ExportTemplatePrefs,
         capturedAt: Date? = nil,
         forceYAML: Bool? = nil,
-        forceMetaBlock: Bool? = nil
+        forceMetaBlock: Bool? = nil,
+        /// When true, every per-field meta toggle (`template.metaCreator`,
+        /// `metaStats`, `metaSource`, etc.) is bypassed and all available fields
+        /// are included. Used by the rich-text share path so Apple Notes / Mail
+        /// always get the full human-readable meta block with tappable links,
+        /// regardless of what the user has hidden in their Settings.
+        forceAllMetaFields: Bool = false
     ) -> String {
         var lines: [String] = []
 
@@ -245,7 +255,7 @@ enum MarkdownFormatter {
 
             case .meta:
                 guard shouldShowMetaBlock else { continue }
-                let block = buildMetaBlock(result, notebook: notebook, template: template, capturedAt: capturedAt)
+                let block = buildMetaBlock(result, notebook: notebook, template: template, capturedAt: capturedAt, forceAllFields: forceAllMetaFields)
                 if !block.isEmpty { lines += [block, ""] }
 
             case .pinnedNote:
@@ -343,7 +353,12 @@ enum MarkdownFormatter {
         _ result: TranscriptResult,
         notebook: Notebook?,
         template: ExportTemplatePrefs,
-        capturedAt: Date?
+        capturedAt: Date?,
+        /// When true, every per-field toggle below is bypassed and the field is
+        /// included if its data is available. Used by the rich-text share path
+        /// so the readable meta block is always complete in Apple Notes / Mail,
+        /// regardless of which fields the user hid in Settings.
+        forceAllFields: Bool = false
     ) -> String {
         let postedStr  = result.postedDate.map { DateFormatter.isoDate.string(from: $0) }
         let capturedStr = capturedAt.map { DateFormatter.isoDate.string(from: $0) }
@@ -352,12 +367,12 @@ enum MarkdownFormatter {
 
         var parts: [String] = []
 
-        if template.metaCreator, let url = creatorURL {
+        if (forceAllFields || template.metaCreator), let url = creatorURL {
             let label = handle.isEmpty ? result.author : handle
             parts += ["**Creator:** [\(label)](\(url))"]
         }
 
-        if template.metaAuthor {
+        if forceAllFields || template.metaAuthor {
             let authorDisplay: String = {
                 if let url = creatorURL {
                     let label = handle.isEmpty ? result.author : "\(result.author) \(handle)"
@@ -368,13 +383,13 @@ enum MarkdownFormatter {
             parts += ["**Author:** \(authorDisplay)"]
         }
 
-        if template.metaPlatform  { parts += ["**Platform:** \(result.platform)"] }
-        if template.metaNotebook, let nb = notebook { parts += ["**Notebook:** \(nb.name)"] }
-        if template.metaCapturedDate, let cap = capturedStr { parts += ["**Captured:** \(cap)"] }
-        if template.metaPostedDate,   let posted = postedStr { parts += ["**Posted:** \(posted)"] }
-        if template.metaDuration,  let dur = result.duration { parts += ["**Duration:** \(dur)"] }
+        if forceAllFields || template.metaPlatform { parts += ["**Platform:** \(result.platform)"] }
+        if (forceAllFields || template.metaNotebook), let nb = notebook { parts += ["**Notebook:** \(nb.name)"] }
+        if (forceAllFields || template.metaCapturedDate), let cap = capturedStr { parts += ["**Captured:** \(cap)"] }
+        if (forceAllFields || template.metaPostedDate), let posted = postedStr { parts += ["**Posted:** \(posted)"] }
+        if (forceAllFields || template.metaDuration), let dur = result.duration { parts += ["**Duration:** \(dur)"] }
 
-        if template.metaStats {
+        if forceAllFields || template.metaStats {
             var statParts: [String] = []
             if let v  = result.viewCount    { statParts += ["\(formatCount(v)) views"] }
             if let l  = result.likeCount    { statParts += ["\(formatCount(l)) likes"] }
@@ -384,7 +399,7 @@ enum MarkdownFormatter {
             if !statParts.isEmpty { parts += ["**Stats:** " + statParts.joined(separator: " · ")] }
         }
 
-        if template.metaSource {
+        if forceAllFields || template.metaSource {
             parts += result.url.isEmpty
                 ? ["**Source:** Imported file"]
                 : ["**Source:** [See Post](\(result.url))"]
