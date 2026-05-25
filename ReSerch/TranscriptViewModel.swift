@@ -747,6 +747,7 @@ final class TranscriptViewModel {
         guard let data = try? Data(contentsOf: historyFileURL) else {
             if Self.suspendSaves {
                 print("[ReSerch] loadHistory — no file while write lock is active; refusing to treat as fresh")
+                Self.corruptionAlert = "Transcript persistence is locked because a previous launch found an unreadable data file. Writes are frozen so an empty feed cannot overwrite recoverable data. Check the ReSerch iCloud folder for .corrupt files or .backups before adding new transcripts."
                 return false
             }
             print("[ReSerch] loadHistory — no file, starting fresh")
@@ -775,7 +776,7 @@ final class TranscriptViewModel {
             Self.suspendSaves = true
             preserveCorruptFile(at: historyFileURL, label: "history")
             history = []
-            Self.corruptionAlert = "Couldn't read your transcripts file. It was preserved as a .corrupt.* backup in the app's iCloud container. Writes are frozen until this is resolved. Tap to view path."
+            Self.corruptionAlert = "Couldn't read your transcripts file. It was preserved as a .corrupt.* file in the app's iCloud container. Writes are frozen so an empty feed cannot overwrite recoverable data. Check the ReSerch iCloud folder and .backups before adding new transcripts."
             return false
         }
     }
@@ -785,7 +786,7 @@ final class TranscriptViewModel {
     /// don't cascade into overwriting the (possibly still-recoverable) cloud
     /// copy with an empty / partial snapshot. Reset to false by an explicit
     /// repair flow, not by app lifecycle.
-    private static let suspendSavesKey = "reserch.persistence.suspendSavesAfterCorruption.v1"
+    nonisolated private static let suspendSavesKey = "reserch.persistence.suspendSavesAfterCorruption.v1"
 
     nonisolated fileprivate static var suspendSaves: Bool {
         get { UserDefaults.standard.bool(forKey: suspendSavesKey) }
@@ -1201,6 +1202,7 @@ final class TranscriptViewModel {
         guard let data = try? Data(contentsOf: notebooksFileURL) else {
             if Self.suspendSaves {
                 print("[ReSerch] loadNotebooks — no file while write lock is active; refusing to treat as fresh")
+                Self.corruptionAlert = (Self.corruptionAlert ?? "Persistence writes are frozen because a previous launch found unreadable data.") + " Notebooks are also locked until recovery is resolved."
                 return false
             }
             print("[ReSerch] loadNotebooks — no file, starting fresh")

@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var showOnboarding = !OnboardingView.hasCompleted
     @State private var searchQuery: String = ""
     @State private var searchIsPresented: Bool = false
+    @State private var persistenceNotice = Self.initialPersistenceNotice()
     @FocusState private var searchFieldFocused: Bool
 
     var body: some View {
@@ -220,6 +221,13 @@ struct ContentView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
 
+            if let persistenceNotice {
+                persistenceBanner(persistenceNotice)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, 8)
+            }
+
             Group {
                 if vm.history.isEmpty && vm.pendingShareJobs.isEmpty {
                     emptyState
@@ -275,6 +283,46 @@ struct ContentView: View {
             }
         }
         .background(Color(red: 0.07, green: 0.09, blue: 0.13))
+    }
+
+    private struct PersistenceNotice {
+        let title: String
+        let message: String
+        let tone: EducationalBanner.Tone
+        let icon: String
+        let canDismiss: Bool
+    }
+
+    private static func initialPersistenceNotice() -> PersistenceNotice? {
+        if let alert = TranscriptViewModel.corruptionAlert {
+            return PersistenceNotice(
+                title: "Data file needs recovery",
+                message: alert,
+                tone: .error,
+                icon: "externaldrive.badge.exclamationmark",
+                canDismiss: false
+            )
+        }
+        if let note = TranscriptViewModel.lastRecoveryNote {
+            return PersistenceNotice(
+                title: "Recovered from backup",
+                message: note,
+                tone: .warning,
+                icon: "arrow.counterclockwise.circle",
+                canDismiss: true
+            )
+        }
+        return nil
+    }
+
+    private func persistenceBanner(_ notice: PersistenceNotice) -> some View {
+        EducationalBanner(
+            tone: notice.tone,
+            icon: notice.icon,
+            title: notice.title,
+            message: notice.message,
+            onDismiss: notice.canDismiss ? { persistenceNotice = nil } : nil
+        )
     }
 
     private var searchBar: some View {
