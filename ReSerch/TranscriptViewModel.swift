@@ -708,7 +708,12 @@ final class TranscriptViewModel {
             template: ExportTemplatePrefs.shared,
             capturedAt: entry.date,
             forceYAML: false,
-            forceMetaBlock: true
+            forceMetaBlock: true,
+            // Force every per-field meta toggle on for the rich-text representation.
+            // Apple Notes / Mail readers want the full meta block (Creator link,
+            // Source link, Stats, dates) — they should not silently drop fields
+            // just because the user hid them from their plain-markdown exports.
+            forceAllMetaFields: true
         )
     }
 
