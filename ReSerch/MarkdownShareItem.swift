@@ -12,6 +12,7 @@ import UIKit
 final class MarkdownShareItem: NSObject, UIActivityItemSource {
 
     let markdown: String
+    private let richMarkdown: String
 
     /// Activity types known to render rich text well. Conservative allowlist —
     /// anything not in the set receives plain markdown so we never silently
@@ -23,13 +24,14 @@ final class MarkdownShareItem: NSObject, UIActivityItemSource {
         "com.apple.UIKit.activity.CopyToPasteboard"   // System copy (pasteboard preserves rich)
     ]
 
-    init(markdown: String) {
+    init(markdown: String, richMarkdown: String) {
         self.markdown = markdown
+        self.richMarkdown = richMarkdown
     }
 
     /// Built lazily and once — the AttributedString conversion has some cost and
     /// we don't want to pay it for plain-text shares that never use it.
-    private lazy var attributed: NSAttributedString = Self.makeAttributed(from: markdown)
+    private lazy var attributed: NSAttributedString = Self.makeAttributed(from: richMarkdown)
 
     func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
         // Placeholder used by the system to decide which activities to show.
@@ -47,11 +49,11 @@ final class MarkdownShareItem: NSObject, UIActivityItemSource {
 
     // MARK: - Markdown → AttributedString
 
-    /// Strips the YAML frontmatter block (if any) then converts the remaining
-    /// markdown to an `NSAttributedString` that preserves `[text](url)` as
-    /// tappable `.link` attributes. Frontmatter is stripped because it renders
-    /// as literal `---\nkey: value\n---` noise in Notes/Mail — the human-readable
-    /// meta block already carries the same info in tappable form.
+    /// Converts rich-share markdown to an `NSAttributedString` that preserves
+    /// `[text](url)` as tappable `.link` attributes. Callers pass a rich-specific
+    /// markdown string where YAML is already forced off and the human-readable
+    /// meta block is forced on; `stripFrontmatter` remains as a defensive no-op
+    /// cleanup if an older caller accidentally supplies frontmatter.
     private static func makeAttributed(from markdown: String) -> NSAttributedString {
         let stripped = stripFrontmatter(markdown)
         // `.full` interpretation: needed for the meta block's `  \n` hard line

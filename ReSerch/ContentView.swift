@@ -276,7 +276,8 @@ struct ContentView: View {
                                     onDelete: { vm.deleteEntry(entry) },
                                     onRename: { vm.renameEntry(entry, to: $0) },
                                     onMoveToNotebook: { singleMoveEntry = entry },
-                                    markdownProvider: { vm.markdownFor(entry) }
+                                    markdownProvider: { vm.markdownFor(entry) },
+                                    richMarkdownProvider: { vm.richTextShareMarkdownFor(entry) }
                                 )
                                 Divider()
                                     .background(Color.white.opacity(0.08))
@@ -529,6 +530,10 @@ struct TranscriptRow: View {
     /// **No default value on purpose:** if a new call site forgets to pass this,
     /// the compiler should refuse rather than ship an empty share output.
     let markdownProvider: () -> String
+    /// Produces markdown for rich-text share destinations. This intentionally
+    /// forces YAML off and the readable meta block on so Notes/Mail always get
+    /// human-useful source context with tappable links.
+    let richMarkdownProvider: () -> String
 
     @State private var showCopied = false
     @State private var showRenameAlert = false
@@ -714,8 +719,9 @@ struct TranscriptRow: View {
 
             Button {
                 let md = vm_markdown()
+                let richMD = rich_markdown()
                 let av = UIActivityViewController(
-                    activityItems: [MarkdownShareItem(markdown: md)],
+                    activityItems: [MarkdownShareItem(markdown: md, richMarkdown: richMD)],
                     applicationActivities: nil
                 )
                 if let popover = av.popoverPresentationController,
@@ -748,6 +754,10 @@ struct TranscriptRow: View {
 
     private func vm_markdown() -> String {
         markdownProvider()
+    }
+
+    private func rich_markdown() -> String {
+        richMarkdownProvider()
     }
 }
 

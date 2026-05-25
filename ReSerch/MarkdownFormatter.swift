@@ -222,11 +222,16 @@ enum MarkdownFormatter {
         notebook: Notebook?,
         notes: [DocumentNote],
         template: ExportTemplatePrefs,
-        capturedAt: Date? = nil
+        capturedAt: Date? = nil,
+        forceYAML: Bool? = nil,
+        forceMetaBlock: Bool? = nil
     ) -> String {
         var lines: [String] = []
 
-        if template.showYAML {
+        let shouldShowYAML = forceYAML ?? template.showYAML
+        let shouldShowMetaBlock = forceMetaBlock ?? template.showMetaBlock
+
+        if shouldShowYAML {
             lines += buildYAML(result, notebook: notebook, template: template, capturedAt: capturedAt)
         }
 
@@ -239,7 +244,7 @@ enum MarkdownFormatter {
                 lines += ["# \(t)", ""]
 
             case .meta:
-                guard template.showMetaBlock else { continue }
+                guard shouldShowMetaBlock else { continue }
                 let block = buildMetaBlock(result, notebook: notebook, template: template, capturedAt: capturedAt)
                 if !block.isEmpty { lines += [block, ""] }
 

@@ -707,6 +707,19 @@ final class TranscriptViewModel {
         return MarkdownFormatter.format(entry.result, notebook: nb, notes: entry.documentNotes, template: ExportTemplatePrefs.shared, capturedAt: entry.date)
     }
 
+    func richTextShareMarkdownFor(_ entry: TranscriptEntry) -> String {
+        let nb = notebook(for: entry.notebookID)
+        return MarkdownFormatter.format(
+            entry.result,
+            notebook: nb,
+            notes: entry.documentNotes,
+            template: ExportTemplatePrefs.shared,
+            capturedAt: entry.date,
+            forceYAML: false,
+            forceMetaBlock: true
+        )
+    }
+
     /// Compiles every transcript in `notebook` into a single markdown document, separated by `---`.
     /// Useful for piping a research topic into a single Obsidian note.
     func combinedMarkdown(for notebook: Notebook) -> String {
