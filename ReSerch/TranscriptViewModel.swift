@@ -188,6 +188,19 @@ final class TranscriptViewModel {
         case error(String)
     }
 
+    /// Gate action for a transcription attempt. Only a genuinely MISSING engine
+    /// routes to the download screen; a present-but-unloaded engine is a
+    /// retryable load error, never a re-download. (Guarded by EngineGateDecisionTests.)
+    enum EngineGate: Equatable { case proceed, needsModel, loadError }
+
+    nonisolated static func engineGateDecision(_ availability: WhisperTranscriber.ModelAvailability) -> EngineGate {
+        switch availability {
+        case .ready: return .proceed
+        case .missing: return .needsModel
+        case .loadFailed: return .loadError
+        }
+    }
+
     /// Platforms whose extractors depend on the app's WKWebsiteDataStore.default() cookie store.
     /// Drives the pre-flight in-app sign-in sheet so users don't wait 20 seconds for an
     /// extractor timeout.
@@ -325,9 +338,15 @@ final class TranscriptViewModel {
                     // exists only so the switch is exhaustive. Treat as unknown if it ever lands here.
                     fallthrough
                 case .tiktok, .instagram, .twitter, .threads, .youtubeShorts, .unknown:
-                    rLog(step: "Whisper", "Model ready: \(whisperTranscriber.isModelReady())")
-                    guard whisperTranscriber.isModelReady() else {
+                    let availability = await whisperTranscriber.prepareForTranscription()
+                    rLog(step: "Whisper", "Engine availability: \(availability)")
+                    switch Self.engineGateDecision(availability) {
+                    case .proceed: break
+                    case .needsModel:
                         status = .needsModel
+                        return
+                    case .loadError:
+                        status = .error("Transcription engine is installed but didn't load. Tap to try again.")
                         return
                     }
 
@@ -505,8 +524,14 @@ final class TranscriptViewModel {
                 rLog(step: "LocalFile", "Importing: \(fileURL.lastPathComponent) (\(displayName))")
 
                 // Whisper model must be ready — same gate as the social audio path
-                guard whisperTranscriber.isModelReady() else {
+                let availability = await whisperTranscriber.prepareForTranscription()
+                switch Self.engineGateDecision(availability) {
+                case .proceed: break
+                case .needsModel:
                     status = .needsModel
+                    return
+                case .loadError:
+                    status = .error("Transcription engine is installed but didn't load. Tap to try again.")
                     return
                 }
 
